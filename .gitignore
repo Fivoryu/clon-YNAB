@@ -4,7 +4,11 @@
 # Node.js dependencies and generated artifacts
 node_modules/
 dist/
+.next/
 coverage/
+playwright-report/
+test-results/
+blob-report/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

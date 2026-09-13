@@ -5,16 +5,30 @@
   "scripts": {
     "test": "node --experimental-strip-types --test apps/api/test/*.test.ts",
     "dev:api": "node --experimental-strip-types apps/api/src/server.ts",
+    "dev:web": "next dev apps/web",
+    "build:web": "next build apps/web",
+    "start:web": "next start apps/web",
+    "test:e2e": "playwright test --project=chromium",
+    "typecheck:web": "tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --jsx preserve --lib ES2022,DOM --skipLibCheck apps/web/app/page.tsx apps/web/app/layout.tsx",
     "db:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
-    "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma"
+    "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "db:status": "prisma migrate status --schema apps/api/prisma/schema.prisma"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
-    "prisma": "^6.19.0"
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prisma": "^6.19.0",
+    "typescript": "^5.7.2"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.0"
+    "@prisma/client": "^6.19.0",
+    "next": "^15.5.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   }
 }
