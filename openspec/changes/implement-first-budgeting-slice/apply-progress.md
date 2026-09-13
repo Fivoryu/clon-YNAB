@@ -193,3 +193,40 @@ This is a coherent corrective checkpoint for month scoping and schema ownership.
 - Fresh checks after the explicit authorization: `docker compose ps` shows `ynab-postgres-1` healthy; `DATABASE_URL=postgresql://ynab:ynab_local@localhost:5432/ynab_dev?schema=public npm run db:validate` passes; and `npx prisma migrate status --schema apps/api/prisma/schema.prisma` reports the database schema up to date.
 - The attempted write to `.env.example` was denied by the runtime safety policy despite explicit user authorization. No workaround or out-of-scope write was attempted.
 - Authored-line estimate: approximately 45 lines across configuration, Prisma corrections, rollback documentation, and this cumulative progress note; dependency lockfile changes are generated metadata.
+
+## PR2 durable identity and setup slice
+
+- Work unit: `PR2 durable identity and setup`; implemented after financial-store verification found that the production server still owned users, sessions, budgets, and setup only in memory.
+- Files changed: `apps/api/src/app.ts`, `apps/api/src/server.ts`, `apps/api/src/persistence/budget-store.ts`, `apps/api/src/persistence/in-memory-budget-store.ts`, `apps/api/test/restart-persistence.test.ts`, and the surgical authorization regression in `apps/api/test/app.test.ts`.
+- Production wiring now constructs a Prisma-backed budget store and FinancialStore explicitly; the in-memory store remains an explicit test double. PostgreSQL persists users, hashed opaque sessions, revocation/expiry, one-budget ownership, account/category setup, and resumable setup state inside transactional writes.
+- RED/GREEN evidence: restart persistence initially failed because the durable store was absent; the restart suite then passed 2/2. The authorization-order regression initially returned `VALIDATION_ERROR` for a foreign invalid setup payload; after correction, the focused app suite passed 6/6 with foreign `NOT_FOUND` and owner `VALIDATION_ERROR` behavior.
+- Independent verification: `DATABASE_URL=postgresql://ynab:ynab_local@localhost:5432/ynab_dev?schema=public npm test` passed 23/23; `npm run db:validate` passed; `git diff --check` passed. The identity/setup slice authored budget was 346 lines, followed by the small authorization correction.
+- Remaining limitation: `FinancialStore` still has seed and in-memory summary fallback behavior. Financial restart durability is not claimed; the next causal work unit must remove those fallbacks and prove a new process can replay and read financial history exclusively from PostgreSQL. Reporting, Playwright, and broader API coverage remain open.
+
+## Current delivery boundary
+
+The durable identity/setup slice is independently verified and suitable to include in the current uncommitted work unit. It is not a complete PR2 or delivery-ready first slice until financial restart durability, concurrent database evidence, reporting, contract coverage, and Playwright acceptance are completed.
+
+## PR2 financial restart durability correction
+
+- Work unit: `PR2 financial restart durability`; removed production financial seeding from in-memory state and removed the silent in-memory summary fallback.
+- Files changed: `apps/api/src/app.ts`, `apps/api/src/persistence/financial-store.ts`, `apps/api/test/financial-persistence.test.ts`, and `apps/api/test/restart-persistence.test.ts`.
+- Financial commands now require an existing owner-scoped durable PostgreSQL budget. The Prisma transaction performs the budget lock, durable idempotency lookup/digest validation, authoritative event read, version check, append, and receipt write; absent or foreign budgets return non-disclosing `NOT_FOUND`.
+- RED/GREEN evidence: focused persistence tests initially had 1 missing rejection; after removing seed/fallback behavior, focused financial/persistence/restart tests passed 12/12 and the full suite passed 25/25.
+- Independent verification: `DATABASE_URL=postgresql://ynab:ynab_local@localhost:5432/ynab_dev?schema=public npm test` passed 25/25; `npm run db:validate` passed; `git diff --check` passed. Restart replay and same-key payload conflict were verified across Prisma-backed app instances.
+- Remaining evidence gap: no concurrent competing-command stress test has been added yet. The explicit in-memory test double retains a seed branch for unit-test setup only; it is not used by the production Prisma path. Reporting, Playwright, and broader API contract coverage remain open.
+
+## Current delivery boundary
+
+The identity/setup and financial restart durability corrections are independently verified and ready for parent review as an uncommitted work unit. The first slice remains incomplete until concurrency evidence and the remaining integration/reporting/E2E gates are addressed.
+
+## PR2 concurrent financial command evidence
+
+- Work unit: `PR2 concurrent financial command evidence`; added an executable PostgreSQL race test without changing production code.
+- The test uses two distinct Prisma clients and two Prisma-backed `BudgetApp` instances against one persisted budget. Both commands use distinct idempotency keys and `expectedVersion: 0`; the test asserts exactly one success at version 1, one `CONFLICT`, one durable receipt, and one durable event.
+- Independent verification: focused persistence tests passed 3/3; the full suite passed 26/26; Prisma validation passed; `git diff --check` passed. Cleanup disconnects both clients and removes the created user/budget records in `finally`.
+- Remaining limitation: this is evidence for the current lock/version strategy, not a complete PR2 delivery gate. Reporting, Playwright, broader API contract coverage, and final migration/rebuild evidence remain open.
+
+## Current worktree note
+
+The implementation and test changes remain uncommitted. `.codegraph/`, `.pi/`, and an empty untracked `NUL` file are local/unreviewed artifacts and are excluded from the intended commit until their origin is explicitly resolved.
