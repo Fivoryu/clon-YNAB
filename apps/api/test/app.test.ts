@@ -87,3 +87,13 @@ test('budget authorization hides foreign budgets and category lifecycle is owner
   app.archiveCategory(a, budget.id, category.id);
   assert.equal(app.getBudget(a, budget.id).data.categories[0].archived, true);
 });
+
+test('foreign users receive NOT_FOUND before setup validation', () => {
+  const app = new BudgetApp();
+  app.register('owner@example.test', 'correct horse');
+  app.register('foreign@example.test', 'correct horse');
+  const owner = app.signIn('owner@example.test', 'correct horse').data.sessionToken;
+  const foreign = app.signIn('foreign@example.test', 'correct horse').data.sessionToken;
+  const budget = app.createBudget(owner).data;
+  assert.throws(() => app.saveSetup(foreign, budget.id, { accountType: 'card' }), (e: ApiError) => e.code === 'NOT_FOUND');
+});

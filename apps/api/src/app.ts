@@ -1,16 +1,14 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { applyAssignment, calculateAccountBalance, calculateCategory, calculateRta, moveAssignment, monthForDate, positiveRollover, releaseIncome, unassign } from './planning/engine.ts';
+import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState } from './persistence/financial-store.ts';
+import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
+import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
 
 type Clock = () => number;
 export type Envelope<T> = { data: T; requestId: string };
 export type User = { id: string; email: string };
 export type Category = { id: string; name: string; archived: boolean };
 export type Budget = { id: string; setupStep: 'ACCOUNT' | 'CATEGORIES' | 'COMPLETE'; timezone: 'UTC'; version: number; account: { id: string; name: string; openingBalanceMinor: number } | null; categories: Category[] };
-type StoredUser = User & { passwordHash: string; budgetId?: string };
-type FinancialEvent = { id: string; kind: 'INCOME' | 'INCOME_RELEASE' | 'SPENDING' | 'ASSIGNMENT' | 'UNASSIGNMENT' | 'MOVE'; amountMinor: number; month?: string; categoryId?: string; sourceCategoryId?: string; destinationCategoryId?: string; relatedEventId?: string };
-type Receipt = { payloadDigest: string; result: unknown };
-type StoredBudget = Budget & { events: FinancialEvent[]; receipts: Map<string, Receipt> };
-type StoredSession = { userId: string; expiresAt: number; revoked: boolean };
 export type SetupInput = { openingBalanceMinor?: number; accountName?: string; accountType?: string; categories?: string[] };
 export type CommandOptions = { idempotencyKey?: string; expectedVersion?: number };
 export type FinancialSummary = { month: string; accountBalanceMinor: number; rta: ReturnType<typeof calculateRta>; categories: (Category & ReturnType<typeof calculateCategory>)[]; version: number };
@@ -25,79 +23,98 @@ export class ApiError extends Error {
 
 const ok = <T>(data: T, requestId = randomUUID()): Envelope<T> => ({ data, requestId });
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const publicBudget = (b: StoredBudget): Budget => ({ id: b.id, setupStep: b.setupStep, timezone: b.timezone, version: b.version, account: b.account ? { ...b.account } : null, categories: b.categories.map(c => ({ ...c })) });
+const publicBudget = (b: BudgetState): Budget => ({ id: b.id, setupStep: b.setupStep, timezone: b.timezone, version: b.version, account: b.account ? { id: b.account.id, name: b.account.name, openingBalanceMinor: b.account.openingBalanceMinor } : null, categories: b.categories.map(c => ({ id: c.id, name: c.name, archived: c.archived })) });
 const amount = (value: unknown, name = 'amountMinor') => { if (!Number.isSafeInteger(value as number) || (value as number) <= 0) throw new ApiError('VALIDATION_ERROR', `${name} must be a positive integer minor-unit amount`); return value as number; };
 const month = (value: unknown) => { if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', 'month must be YYYY-MM'); return value; };
 const dateMonth = (value: unknown, timezone: string) => { try { return monthForDate(typeof value === 'string' ? value : new Date(), timezone); } catch { throw new ApiError('VALIDATION_ERROR', 'date is invalid'); } };
 
 export class BudgetApp {
-  private readonly users = new Map<string, StoredUser>();
-  private readonly sessions = new Map<string, StoredSession>();
-  private readonly budgets = new Map<string, StoredBudget>();
   private readonly now: Clock;
-  constructor(now: Clock = Date.now) { this.now = now; }
+  private readonly budgetStore: BudgetStore;
+  private readonly financialStore: Pick<FinancialStore, 'execute' | 'load'> | InMemoryFinancialStore;
+  constructor(now: Clock = Date.now, store?: BudgetStore | FinancialStore, financialStore?: FinancialStore) {
+    this.now = now;
+    if (store instanceof FinancialStore) { this.budgetStore = new InMemoryBudgetStore(); this.financialStore = store; }
+    else { this.budgetStore = store ?? new InMemoryBudgetStore(); this.financialStore = financialStore ?? (this.budgetStore instanceof InMemoryBudgetStore ? new InMemoryFinancialStore(this.budgetStore) : new FinancialStore()); }
+  }
+  private storeError(error: unknown): never { if (error instanceof BudgetStoreError) throw new ApiError(error.code, error.message); throw error; }
+  private result<T>(value: T | Promise<T>, requestId: string | undefined, map: (value: T) => unknown) { return value instanceof Promise ? value.then(item => map(item)).catch(error => this.storeError(error)) : map(value); }
 
   register(email: string, password: string, requestId?: string) {
     const normalized = email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized) || password.length < 8) throw new ApiError('VALIDATION_ERROR', 'Email or password is invalid');
-    if (this.users.has(normalized)) throw new ApiError('CONFLICT', 'Account already exists');
-    const user: StoredUser = { id: randomUUID(), email: normalized, passwordHash: this.hash(password) }; this.users.set(normalized, user);
-    return ok<User>({ id: user.id, email: user.email }, requestId);
+    const user = { id: randomUUID(), email: normalized, passwordHash: this.hash(password) };
+    try { return this.result(this.budgetStore.createUser(user), requestId, () => ok<User>({ id: user.id, email: user.email }, requestId)); } catch (error) { return this.storeError(error); }
   }
   signIn(email: string, password: string, requestId?: string) {
-    const user = this.users.get(email.trim().toLowerCase());
-    if (!user || !this.verify(password, user.passwordHash)) throw new ApiError('UNAUTHENTICATED', 'Invalid credentials');
-    const token = randomBytes(32).toString('hex'); this.sessions.set(digest(token), { userId: user.id, expiresAt: this.now() + 8 * 60 * 60 * 1000, revoked: false });
-    return ok({ user: { id: user.id, email: user.email }, sessionToken: token }, requestId);
+    const found = this.budgetStore.findUser(email.trim().toLowerCase());
+    const sign = (user: StoredUser | null) => {
+      if (!user || !this.verify(password, user.passwordHash)) throw new ApiError('UNAUTHENTICATED', 'Invalid credentials');
+      const token = randomBytes(32).toString('hex');
+      try { return this.result(this.budgetStore.createSession({ tokenHash: digest(token), userId: user.id, expiresAt: this.now() + 8 * 60 * 60 * 1000 }), requestId, () => ok({ user: { id: user.id, email: user.email }, sessionToken: token }, requestId)); } catch (error) { return this.storeError(error); }
+    };
+    return found instanceof Promise ? found.then(sign) : sign(found);
   }
-  signOut(token: string) { const session = this.sessions.get(digest(token)); if (session) session.revoked = true; }
-  authenticate(token: string): User {
-    const session = this.sessions.get(digest(token));
-    if (!session || session.revoked || session.expiresAt <= this.now()) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
-    const user = [...this.users.values()].find(candidate => candidate.id === session.userId); if (!user) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
-    return { id: user.id, email: user.email };
+  signOut(token: string) { try { return this.budgetStore.revokeSession(digest(token)); } catch (error) { return this.storeError(error); } }
+  authenticate(token: string): User | Promise<User> {
+    const found = this.budgetStore.findSession(digest(token));
+    const resolve = (session: { userId: string; expiresAt: number; revoked: boolean } | null) => {
+      if (!session || session.revoked || session.expiresAt <= this.now()) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
+      const foundUser = this.budgetStore.findUserById(session.userId);
+      const user = (candidate: StoredUser | null) => { if (!candidate) throw new ApiError('UNAUTHENTICATED', 'Authentication required'); return { id: candidate.id, email: candidate.email }; };
+      return foundUser instanceof Promise ? foundUser.then(user) : user(foundUser);
+    };
+    return found instanceof Promise ? found.then(resolve) : resolve(found);
   }
   createBudget(token: string, requestId?: string) {
-    const user = this.authenticate(token); const stored = [...this.users.values()].find(candidate => candidate.id === user.id)!;
-    if (stored.budgetId) throw new ApiError('CONFLICT', 'A user can own only one budget');
-    const budget: StoredBudget = { id: randomUUID(), setupStep: 'ACCOUNT', timezone: 'UTC', version: 0, account: null, categories: [], events: [], receipts: new Map() };
-    this.budgets.set(budget.id, budget); stored.budgetId = budget.id; return ok(publicBudget(budget), requestId);
+    const auth = this.authenticate(token);
+    const create = (user: User) => {
+      const found = this.budgetStore.findUserById(user.id);
+      const persist = (owner: StoredUser | null) => {
+        if (!owner) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
+        const state: BudgetState = { id: randomUUID(), setupStep: 'ACCOUNT', timezone: 'UTC', version: 0, account: null, categories: [], events: [] };
+        try { return this.result(this.budgetStore.createBudget(owner.id, state), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); }
+      };
+      return found instanceof Promise ? found.then(persist) : persist(found);
+    };
+    return auth instanceof Promise ? auth.then(create) : create(auth);
   }
-  getBudget(token: string, budgetId: string, requestId?: string) { return ok(publicBudget(this.requireBudget(token, budgetId)), requestId); }
+  getBudget(token: string, budgetId: string, requestId?: string) { return this.result(this.requireBudget(token, budgetId), requestId, budget => ok(publicBudget(budget), requestId)); }
   resumeBudget(token: string, requestId?: string) {
-    const user = this.authenticate(token); const owner = [...this.users.values()].find(candidate => candidate.id === user.id);
-    if (!owner?.budgetId) throw new ApiError('NOT_FOUND', 'Resource not found'); return ok(publicBudget(this.budgets.get(owner.budgetId)!), requestId);
+    const auth = this.authenticate(token);
+    const resume = (user: User) => {
+      const owner = this.budgetStore.findUserById(user.id);
+      const load = (stored: StoredUser | null) => { if (!stored?.budgetId) throw new ApiError('NOT_FOUND', 'Resource not found'); return this.result(this.budgetStore.loadBudget(user.id, stored.budgetId), requestId, budget => budget ? ok(publicBudget(budget), requestId) : (() => { throw new ApiError('NOT_FOUND', 'Resource not found'); })()); };
+      return owner instanceof Promise ? owner.then(load) : load(owner);
+    };
+    return auth instanceof Promise ? auth.then(resume) : resume(auth);
   }
   saveSetup(token: string, budgetId: string, input: SetupInput, requestId?: string) {
-    const budget = this.requireBudget(token, budgetId);
-    if (input.accountType && !['cash', 'checking'].includes(input.accountType)) throw new ApiError('VALIDATION_ERROR', 'Only cash or checking accounts are supported');
-    if (input.openingBalanceMinor !== undefined && (!Number.isInteger(input.openingBalanceMinor) || !Number.isSafeInteger(input.openingBalanceMinor))) throw new ApiError('VALIDATION_ERROR', 'Opening balance must be integer minor units');
-    if (input.categories) { const names = [...new Set(input.categories.map(name => name.trim()).filter(Boolean))]; budget.categories = names.map(name => budget.categories.find(category => category.name === name) ?? { id: randomUUID(), name, archived: false }); }
-    if (input.openingBalanceMinor !== undefined) budget.account = { id: budget.account?.id ?? randomUUID(), name: input.accountName?.trim() || budget.account?.name || 'Cash', openingBalanceMinor: input.openingBalanceMinor };
-    budget.setupStep = budget.account ? (budget.categories.some(category => !category.archived) ? 'COMPLETE' : 'CATEGORIES') : 'ACCOUNT'; return ok(publicBudget(budget), requestId);
+    const current = this.requireBudget(token, budgetId);
+    const save = (budget: BudgetState) => {
+      if (input.accountType && !['cash', 'checking'].includes(input.accountType)) throw new ApiError('VALIDATION_ERROR', 'Only cash or checking accounts are supported');
+      if (input.openingBalanceMinor !== undefined && (!Number.isInteger(input.openingBalanceMinor) || !Number.isSafeInteger(input.openingBalanceMinor))) throw new ApiError('VALIDATION_ERROR', 'Opening balance must be integer minor units');
+      if (input.categories) { const names = [...new Set(input.categories.map(name => name.trim()).filter(Boolean))]; budget.categories = names.map(name => budget.categories.find(category => category.name === name) ?? { id: randomUUID(), name, archived: false }); }
+      if (input.openingBalanceMinor !== undefined) budget.account = { id: budget.account?.id ?? randomUUID(), name: input.accountName?.trim() || budget.account?.name || 'Cash', openingBalanceMinor: input.openingBalanceMinor };
+      budget.setupStep = budget.account ? (budget.categories.some(category => !category.archived) ? 'COMPLETE' : 'CATEGORIES') : 'ACCOUNT';
+      try { return this.result(this.budgetStore.saveBudget((budget as any).ownerId, budget), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); }
+    };
+    return current instanceof Promise ? current.then(save) : save(current);
   }
-  createCategory(token: string, budgetId: string, name: string, requestId?: string) {
-    const budget = this.requireBudget(token, budgetId); const trimmed = name.trim();
-    if (!trimmed) throw new ApiError('VALIDATION_ERROR', 'Category name is required');
-    if (budget.categories.some(c => !c.archived && c.name.toLowerCase() === trimmed.toLowerCase())) throw new ApiError('CONFLICT', 'Category already exists');
-    budget.categories.push({ id: randomUUID(), name: trimmed, archived: false }); return ok(publicBudget(budget), requestId);
-  }
-  renameCategory(token: string, budgetId: string, categoryId: string, name: string, requestId?: string) {
-    const budget = this.requireBudget(token, budgetId); const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found');
-    if (!name.trim()) throw new ApiError('VALIDATION_ERROR', 'Category name is required'); category.name = name.trim(); return ok(publicBudget(budget), requestId);
-  }
-  archiveCategory(token: string, budgetId: string, categoryId: string, requestId?: string) {
-    const budget = this.requireBudget(token, budgetId); const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found');
-    category.archived = true; budget.setupStep = budget.account && budget.categories.some(c => !c.archived) ? 'COMPLETE' : 'CATEGORIES'; return ok(publicBudget(budget), requestId);
+  createCategory(token: string, budgetId: string, name: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const trimmed = name.trim(); if (!trimmed) throw new ApiError('VALIDATION_ERROR', 'Category name is required'); if (budget.categories.some(c => !c.archived && c.name.toLowerCase() === trimmed.toLowerCase())) throw new ApiError('CONFLICT', 'Category already exists'); budget.categories.push({ id: randomUUID(), name: trimmed, archived: false }); }); }
+  renameCategory(token: string, budgetId: string, categoryId: string, name: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (!name.trim()) throw new ApiError('VALIDATION_ERROR', 'Category name is required'); category.name = name.trim(); }); }
+  archiveCategory(token: string, budgetId: string, categoryId: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); category.archived = true; budget.setupStep = budget.account && budget.categories.some(c => !c.archived) ? 'COMPLETE' : 'CATEGORIES'; }); }
+  private changeCategory(token: string, budgetId: string, requestId: string | undefined, change: (budget: BudgetState) => void) {
+    const current = this.requireBudget(token, budgetId); const save = (budget: BudgetState) => { change(budget); try { return this.result(this.budgetStore.saveBudget((budget as any).ownerId, budget), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); } }; return current instanceof Promise ? current.then(save) : save(current);
   }
 
-  recordIncome(token: string, budgetId: string, input: { amountMinor: unknown; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
+  async recordIncome(token: string, budgetId: string, input: { amountMinor: unknown; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'income', input, requestId, options, (budget, events, version) => {
       this.ready(budget); const value = amount(input.amountMinor); const id = randomUUID(); events.push({ id, kind: 'INCOME', amountMinor: value, month: dateMonth(input.date, budget.timezone) });
       return { id, amountMinor: value, released: false, accountBalanceMinor: this.balance(budget, events), version };
     });
   }
-  releaseIncome(token: string, budgetId: string, incomeId: string, requestId?: string, options: CommandOptions = {}) {
+  async releaseIncome(token: string, budgetId: string, incomeId: string, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'release', { incomeId }, requestId, options, (budget, events, version) => {
       this.ready(budget); const income = events.find(e => e.id === incomeId && e.kind === 'INCOME'); if (!income) throw new ApiError('NOT_FOUND', 'Resource not found');
       const released = events.filter(e => e.kind === 'INCOME_RELEASE' && e.relatedEventId === incomeId).reduce((sum, e) => sum + e.amountMinor, 0);
@@ -106,59 +123,75 @@ export class BudgetApp {
       return { incomeId, releasedNowMinor: releasedNow, released: true, version };
     });
   }
-  recordSpending(token: string, budgetId: string, input: { amountMinor: unknown; categoryId: string; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
+  async recordSpending(token: string, budgetId: string, input: { amountMinor: unknown; categoryId: string; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'spending', input, requestId, options, (budget, events, version) => {
       this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = dateMonth(input.date, budget.timezone); const id = randomUUID();
       events.push({ id, kind: 'SPENDING', amountMinor: value, categoryId: input.categoryId, month: monthValue }); return { id, amountMinor: value, categoryId: input.categoryId, month: monthValue, accountBalanceMinor: this.balance(budget, events), version };
     });
   }
-  assign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
+  async assign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'assignment', input, requestId, options, (budget, events, version) => {
       this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const id = randomUUID();
       events.push({ id, kind: 'ASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.summary(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, previousRtaMinor: state.rta.amountMinor, version };
     });
   }
-  unassign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
+  async unassign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'unassignment', input, requestId, options, (budget, events, version) => {
       this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const category = state.categories.find(c => c.id === input.categoryId)!;
       if (value > category.assignedMinor) throw new ApiError('CONFLICT', 'Cannot unassign more than assigned'); const id = randomUUID(); events.push({ id, kind: 'UNASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.summary(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, version };
     });
   }
-  move(token: string, budgetId: string, input: { sourceCategoryId: string; destinationCategoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
+  async move(token: string, budgetId: string, input: { sourceCategoryId: string; destinationCategoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'move', input, requestId, options, (budget, events, version) => {
       this.ready(budget); if (input.sourceCategoryId === input.destinationCategoryId) throw new ApiError('VALIDATION_ERROR', 'Move categories must differ'); this.activeCategory(budget, input.sourceCategoryId); this.activeCategory(budget, input.destinationCategoryId);
       const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const source = state.categories.find(c => c.id === input.sourceCategoryId)!; if (value > source.assignedMinor) throw new ApiError('CONFLICT', 'Cannot move more than assigned');
       const id = randomUUID(); events.push({ id, kind: 'MOVE', amountMinor: value, sourceCategoryId: input.sourceCategoryId, destinationCategoryId: input.destinationCategoryId, month: monthValue }); return { id, ...moveAssignment({ assignedMinor: source.assignedMinor }, { assignedMinor: state.categories.find(c => c.id === input.destinationCategoryId)!.assignedMinor }, value), version };
     });
   }
-  getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { const budget = this.requireBudget(token, budgetId); return ok(this.summary(budget, month(requestedMonth), budget.events), requestId); }
-  getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { const budget = this.requireBudget(token, budgetId); return ok(this.summary(budget, month(requestedMonth), budget.events), requestId); }
+  async getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
+  async getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
 
-  private financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: StoredBudget, events: FinancialEvent[], version: number) => T) {
-    const budget = this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required');
-    const payloadDigest = digest({ command, input }); const old = budget.receipts.get(key);
-    if (old) { if (old.payloadDigest !== payloadDigest) throw new ApiError('CONFLICT', 'Idempotency key was reused with a different payload'); return ok(old.result as T, requestId); }
-    if (options.expectedVersion !== undefined && options.expectedVersion !== budget.version) throw new ApiError('CONFLICT', 'Budget version is stale');
-    const events = budget.events.map(event => ({ ...event })); const result = work(budget, events, budget.version + 1);
-    budget.events = events; budget.version += 1; budget.receipts.set(key, { payloadDigest, result }); return ok(result, requestId);
+  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number) => T) {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required');
+    try {
+      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work });
+      return ok(stored.result, requestId);
+    } catch (error) {
+      if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
   }
-  private summary(budget: StoredBudget, requestedMonth: string, events: FinancialEvent[]): FinancialSummary {
+  private async readSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const requested = month(requestedMonth);
+    try {
+      const state = await this.financialStore.load(user.id, budgetId);
+      return ok(this.summary(state, requested, state.events), requestId);
+    } catch (error) {
+      if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
+  }
+  private summary(budget: FinancialState, requestedMonth: string, events: FinancialEvent[]): FinancialSummary {
     const income = events.filter(e => e.kind === 'INCOME' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0); const released = events.filter(e => e.kind === 'INCOME_RELEASE' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0);
     const accountIncome = events.filter(e => e.kind === 'INCOME').reduce((sum, e) => sum + e.amountMinor, 0); const spending = events.filter(e => e.kind === 'SPENDING').reduce((sum, e) => sum + e.amountMinor, 0);
     const prior = this.categoryCarry(budget, requestedMonth, events); const assigned = events.filter(e => e.month === requestedMonth && (e.kind === 'ASSIGNMENT' || e.kind === 'UNASSIGNMENT')).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' ? e.amountMinor : -e.amountMinor), 0);
     const categories = budget.categories.map(category => ({ ...category, ...this.categoryValues(budget, category.id, requestedMonth, events) }));
     return { month: requestedMonth, accountBalanceMinor: calculateAccountBalance({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, incomeMinor: accountIncome, spendingMinor: spending }), rta: calculateRta({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, releasedIncomeMinor: released, unreleasedIncomeMinor: income - released, priorCarryMinor: prior, assignedMinor: assigned }), categories, version: budget.version };
   }
-  private categoryCarry(budget: StoredBudget, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); return budget.categories.reduce((sum, c) => sum + positiveRollover(this.categoryValues(budget, c.id, previous, events).availableMinor), 0); }
-  private categoryValues(budget: StoredBudget, categoryId: string, requestedMonth: string, events: FinancialEvent[]) {
+  private categoryCarry(budget: FinancialState, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); return budget.categories.reduce((sum, c) => sum + positiveRollover(this.categoryValues(budget, c.id, previous, events).availableMinor), 0); }
+  private categoryValues(budget: FinancialState, categoryId: string, requestedMonth: string, events: FinancialEvent[]) {
     const carry = this.categoryCarryFor(budget, categoryId, requestedMonth, events); const assigned = events.filter(e => e.month === requestedMonth).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' && e.categoryId === categoryId ? e.amountMinor : e.kind === 'UNASSIGNMENT' && e.categoryId === categoryId ? -e.amountMinor : e.kind === 'MOVE' && e.destinationCategoryId === categoryId ? e.amountMinor : e.kind === 'MOVE' && e.sourceCategoryId === categoryId ? -e.amountMinor : 0), 0);
     const activity = -events.filter(e => e.kind === 'SPENDING' && e.month === requestedMonth && e.categoryId === categoryId).reduce((sum, e) => sum + e.amountMinor, 0); return calculateCategory({ carryoverMinor: carry, assignedMinor: Math.max(0, assigned), activityMinor: activity });
   }
-  private categoryCarryFor(budget: StoredBudget, categoryId: string, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); if (!events.some(e => e.month && e.month <= previous && (e.categoryId === categoryId || e.sourceCategoryId === categoryId || e.destinationCategoryId === categoryId))) return 0; return positiveRollover(this.categoryValues(budget, categoryId, previous, events).availableMinor); }
-  private balance(budget: StoredBudget, events: FinancialEvent[]) { return calculateAccountBalance({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, incomeMinor: events.filter(e => e.kind === 'INCOME').reduce((s, e) => s + e.amountMinor, 0), spendingMinor: events.filter(e => e.kind === 'SPENDING').reduce((s, e) => s + e.amountMinor, 0) }); }
-  private ready(budget: StoredBudget) { if (budget.setupStep !== 'COMPLETE' || !budget.account || budget.account.archived) throw new ApiError('CONFLICT', 'Budget setup is incomplete'); }
-  private activeCategory(budget: StoredBudget, id: string) { const category = budget.categories.find(c => c.id === id); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (category.archived) throw new ApiError('CONFLICT', 'Archived categories cannot receive new activity'); return category; }
-  private requireBudget(token: string, budgetId: string) { const user = this.authenticate(token); const budget = this.budgets.get(budgetId); const owner = [...this.users.values()].find(candidate => candidate.id === user.id); if (!budget || !owner || owner.budgetId !== budget.id) throw new ApiError('NOT_FOUND', 'Resource not found'); return budget; }
+  private categoryCarryFor(budget: FinancialState, categoryId: string, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); if (!events.some(e => e.month && e.month <= previous && (e.categoryId === categoryId || e.sourceCategoryId === categoryId || e.destinationCategoryId === categoryId))) return 0; return positiveRollover(this.categoryValues(budget, categoryId, previous, events).availableMinor); }
+  private balance(budget: FinancialState, events: FinancialEvent[]) { return calculateAccountBalance({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, incomeMinor: events.filter(e => e.kind === 'INCOME').reduce((s, e) => s + e.amountMinor, 0), spendingMinor: events.filter(e => e.kind === 'SPENDING').reduce((s, e) => s + e.amountMinor, 0) }); }
+  private ready(budget: FinancialState) { if (budget.setupStep !== 'COMPLETE' || !budget.account || budget.account.archived) throw new ApiError('CONFLICT', 'Budget setup is incomplete'); }
+  private activeCategory(budget: FinancialState, id: string) { const category = budget.categories.find(c => c.id === id); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (category.archived) throw new ApiError('CONFLICT', 'Archived categories cannot receive new activity'); return category; }
+  private requireBudget(token: string, budgetId: string) {
+    const auth = this.authenticate(token);
+    const load = (user: User) => { const budget = this.budgetStore.loadBudget(user.id, budgetId); const found = (state: BudgetState | null) => { if (!state) throw new ApiError('NOT_FOUND', 'Resource not found'); return Object.assign(state, { ownerId: user.id }); }; return budget instanceof Promise ? budget.then(found) : found(budget); };
+    return auth instanceof Promise ? auth.then(load) : load(auth);
+  }
   private hash(password: string) { const salt = randomBytes(16); return `${salt.toString('hex')}:${scryptSync(password, salt, 32).toString('hex')}`; }
   private verify(password: string, encoded: string) { const [salt, expected] = encoded.split(':'); const actual = scryptSync(password, Buffer.from(salt, 'hex'), 32); return timingSafeEqual(actual, Buffer.from(expected, 'hex')); }
 }
