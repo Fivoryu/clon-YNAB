@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { applyAssignment, calculateAccountBalance, calculateCategory, calculateRta, moveAssignment, monthForDate, positiveRollover, releaseIncome, unassign } from './planning/engine.ts';
+import { applyAssignment, calculateAccountBalance, moveAssignment, monthForDate, releaseIncome, unassign } from './planning/engine.ts';
+import { ReportService, type FinancialSummary } from './reports/report-service.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
 import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
@@ -11,7 +12,7 @@ export type Category = { id: string; name: string; archived: boolean };
 export type Budget = { id: string; setupStep: 'ACCOUNT' | 'CATEGORIES' | 'COMPLETE'; timezone: 'UTC'; version: number; account: { id: string; name: string; openingBalanceMinor: number } | null; categories: Category[] };
 export type SetupInput = { openingBalanceMinor?: number; accountName?: string; accountType?: string; categories?: string[] };
 export type CommandOptions = { idempotencyKey?: string; expectedVersion?: number };
-export type FinancialSummary = { month: string; accountBalanceMinor: number; rta: ReturnType<typeof calculateRta>; categories: (Category & ReturnType<typeof calculateCategory>)[]; version: number };
+export type { FinancialSummary };
 
 export class ApiError extends Error {
   readonly code: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION_ERROR';
@@ -32,6 +33,7 @@ export class BudgetApp {
   private readonly now: Clock;
   private readonly budgetStore: BudgetStore;
   private readonly financialStore: Pick<FinancialStore, 'execute' | 'load'> | InMemoryFinancialStore;
+  private readonly reports = new ReportService();
   constructor(now: Clock = Date.now, store?: BudgetStore | FinancialStore, financialStore?: FinancialStore) {
     this.now = now;
     if (store instanceof FinancialStore) { this.budgetStore = new InMemoryBudgetStore(); this.financialStore = store; }
@@ -131,20 +133,20 @@ export class BudgetApp {
   }
   async assign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'assignment', input, requestId, options, (budget, events, version) => {
-      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const id = randomUUID();
-      events.push({ id, kind: 'ASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.summary(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, previousRtaMinor: state.rta.amountMinor, version };
+      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.reports.read(budget, monthValue, events); const id = randomUUID();
+      events.push({ id, kind: 'ASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.reports.read(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, previousRtaMinor: state.rta.amountMinor, version };
     });
   }
   async unassign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'unassignment', input, requestId, options, (budget, events, version) => {
-      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const category = state.categories.find(c => c.id === input.categoryId)!;
-      if (value > category.assignedMinor) throw new ApiError('CONFLICT', 'Cannot unassign more than assigned'); const id = randomUUID(); events.push({ id, kind: 'UNASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.summary(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, version };
+      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.reports.read(budget, monthValue, events); const category = state.categories.find(c => c.id === input.categoryId)!;
+      if (value > category.assignedMinor) throw new ApiError('CONFLICT', 'Cannot unassign more than assigned'); const id = randomUUID(); events.push({ id, kind: 'UNASSIGNMENT', amountMinor: value, categoryId: input.categoryId, month: monthValue }); const next = this.reports.read(budget, monthValue, events); return { id, categoryId: input.categoryId, amountMinor: value, rtaMinor: next.rta.amountMinor, assignedMinor: next.categories.find(c => c.id === input.categoryId)!.assignedMinor, version };
     });
   }
   async move(token: string, budgetId: string, input: { sourceCategoryId: string; destinationCategoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'move', input, requestId, options, (budget, events, version) => {
       this.ready(budget); if (input.sourceCategoryId === input.destinationCategoryId) throw new ApiError('VALIDATION_ERROR', 'Move categories must differ'); this.activeCategory(budget, input.sourceCategoryId); this.activeCategory(budget, input.destinationCategoryId);
-      const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.summary(budget, monthValue, events); const source = state.categories.find(c => c.id === input.sourceCategoryId)!; if (value > source.assignedMinor) throw new ApiError('CONFLICT', 'Cannot move more than assigned');
+      const value = amount(input.amountMinor); const monthValue = month(input.month); const state = this.reports.read(budget, monthValue, events); const source = state.categories.find(c => c.id === input.sourceCategoryId)!; if (value > source.assignedMinor) throw new ApiError('CONFLICT', 'Cannot move more than assigned');
       const id = randomUUID(); events.push({ id, kind: 'MOVE', amountMinor: value, sourceCategoryId: input.sourceCategoryId, destinationCategoryId: input.destinationCategoryId, month: monthValue }); return { id, ...moveAssignment({ assignedMinor: source.assignedMinor }, { assignedMinor: state.categories.find(c => c.id === input.destinationCategoryId)!.assignedMinor }, value), version };
     });
   }
@@ -165,25 +167,12 @@ export class BudgetApp {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const requested = month(requestedMonth);
     try {
       const state = await this.financialStore.load(user.id, budgetId);
-      return ok(this.summary(state, requested, state.events), requestId);
+      return ok(this.reports.read(state, requested), requestId);
     } catch (error) {
       if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
       throw error;
     }
   }
-  private summary(budget: FinancialState, requestedMonth: string, events: FinancialEvent[]): FinancialSummary {
-    const income = events.filter(e => e.kind === 'INCOME' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0); const released = events.filter(e => e.kind === 'INCOME_RELEASE' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0);
-    const accountIncome = events.filter(e => e.kind === 'INCOME').reduce((sum, e) => sum + e.amountMinor, 0); const spending = events.filter(e => e.kind === 'SPENDING').reduce((sum, e) => sum + e.amountMinor, 0);
-    const prior = this.categoryCarry(budget, requestedMonth, events); const assigned = events.filter(e => e.month === requestedMonth && (e.kind === 'ASSIGNMENT' || e.kind === 'UNASSIGNMENT')).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' ? e.amountMinor : -e.amountMinor), 0);
-    const categories = budget.categories.map(category => ({ ...category, ...this.categoryValues(budget, category.id, requestedMonth, events) }));
-    return { month: requestedMonth, accountBalanceMinor: calculateAccountBalance({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, incomeMinor: accountIncome, spendingMinor: spending }), rta: calculateRta({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, releasedIncomeMinor: released, unreleasedIncomeMinor: income - released, priorCarryMinor: prior, assignedMinor: assigned }), categories, version: budget.version };
-  }
-  private categoryCarry(budget: FinancialState, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); return budget.categories.reduce((sum, c) => sum + positiveRollover(this.categoryValues(budget, c.id, previous, events).availableMinor), 0); }
-  private categoryValues(budget: FinancialState, categoryId: string, requestedMonth: string, events: FinancialEvent[]) {
-    const carry = this.categoryCarryFor(budget, categoryId, requestedMonth, events); const assigned = events.filter(e => e.month === requestedMonth).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' && e.categoryId === categoryId ? e.amountMinor : e.kind === 'UNASSIGNMENT' && e.categoryId === categoryId ? -e.amountMinor : e.kind === 'MOVE' && e.destinationCategoryId === categoryId ? e.amountMinor : e.kind === 'MOVE' && e.sourceCategoryId === categoryId ? -e.amountMinor : 0), 0);
-    const activity = -events.filter(e => e.kind === 'SPENDING' && e.month === requestedMonth && e.categoryId === categoryId).reduce((sum, e) => sum + e.amountMinor, 0); return calculateCategory({ carryoverMinor: carry, assignedMinor: Math.max(0, assigned), activityMinor: activity });
-  }
-  private categoryCarryFor(budget: FinancialState, categoryId: string, requestedMonth: string, events: FinancialEvent[]) { const previous = previousMonth(requestedMonth); if (!events.some(e => e.month && e.month <= previous && (e.categoryId === categoryId || e.sourceCategoryId === categoryId || e.destinationCategoryId === categoryId))) return 0; return positiveRollover(this.categoryValues(budget, categoryId, previous, events).availableMinor); }
   private balance(budget: FinancialState, events: FinancialEvent[]) { return calculateAccountBalance({ openingBalanceMinor: budget.account?.openingBalanceMinor ?? 0, incomeMinor: events.filter(e => e.kind === 'INCOME').reduce((s, e) => s + e.amountMinor, 0), spendingMinor: events.filter(e => e.kind === 'SPENDING').reduce((s, e) => s + e.amountMinor, 0) }); }
   private ready(budget: FinancialState) { if (budget.setupStep !== 'COMPLETE' || !budget.account || budget.account.archived) throw new ApiError('CONFLICT', 'Budget setup is incomplete'); }
   private activeCategory(budget: FinancialState, id: string) { const category = budget.categories.find(c => c.id === id); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (category.archived) throw new ApiError('CONFLICT', 'Archived categories cannot receive new activity'); return category; }
@@ -196,5 +185,4 @@ export class BudgetApp {
   private verify(password: string, encoded: string) { const [salt, expected] = encoded.split(':'); const actual = scryptSync(password, Buffer.from(salt, 'hex'), 32); return timingSafeEqual(actual, Buffer.from(expected, 'hex')); }
 }
 
-const previousMonth = (value: string) => { const date = new Date(`${value}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); return date.toISOString().slice(0, 7); };
 export const errorEnvelope = (error: unknown, requestId = randomUUID()) => { const e = error instanceof ApiError ? error : new ApiError('VALIDATION_ERROR', 'Request failed', 400); return { status: e.status, body: { error: { code: e.code, message: e.message, requestId } } }; };

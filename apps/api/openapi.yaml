@@ -2,30 +2,300 @@ openapi: 3.0.3
 info:
   title: YNAB first-slice API
   version: 1.0.0
+  description: >-
+    The implemented first slice supports cash and checking accounts, categories,
+    realized income, explicit income release, categorized spending, assignments,
+    unassignments, moves, monthly summaries, and dashboard values. Transfers,
+    splits, cards, reconciliation, targets, scheduled transactions, future income,
+    refunds, reimbursements, returns, edits, deletes, and cleared/pending/uncleared
+    states are unsupported and are not part of this contract.
 servers:
   - url: /
 paths:
-  /api/v1/auth/register: { post: { summary: Register, responses: { '201': { description: Created } } } }
-  /api/v1/auth/sign-in: { post: { summary: Sign in, responses: { '200': { description: Authenticated } } } }
-  /api/v1/auth/sign-out: { post: { summary: Revoke session, responses: { '200': { description: Revoked } } } }
-  /api/v1/budgets: { get: { summary: Resume owner budget }, post: { summary: Create one owner budget } }
-  /api/v1/budgets/{budgetId}: { put: { summary: Save setup }, get: { summary: Read budget } }
-  /api/v1/budgets/{budgetId}/categories: { post: { summary: Create category } }
-  /api/v1/budgets/{budgetId}/categories/{categoryId}: { patch: { summary: Rename category } }
-  /api/v1/budgets/{budgetId}/categories/{categoryId}/archive: { post: { summary: Archive category } }
-  /api/v1/budgets/{budgetId}/income: { post: { summary: Record realized income } }
-  /api/v1/budgets/{budgetId}/income/{incomeId}/release: { post: { summary: Explicitly release full income } }
-  /api/v1/budgets/{budgetId}/spending: { post: { summary: Record categorized spending } }
-  /api/v1/budgets/{budgetId}/allocations: { post: { summary: Assign money } }
-  /api/v1/budgets/{budgetId}/allocations/unassign: { post: { summary: Unassign money } }
-  /api/v1/budgets/{budgetId}/allocations/move: { post: { summary: Move assignment } }
-  /api/v1/budgets/{budgetId}/summary: { get: { summary: Read canonical monthly summary } }
-  /api/v1/budgets/{budgetId}/dashboard: { get: { summary: Read canonical dashboard values } }
+  /api/v1/auth/register:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }]
+    post:
+      summary: Register
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/UserSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/auth/sign-in:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }]
+    post:
+      summary: Sign in
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SignInInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/SessionSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/auth/sign-out:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }]
+    post:
+      summary: Revoke the session cookie when present
+      description: The sid cookie is optional; the server returns success and clears it.
+      responses:
+        '200': { $ref: '#/components/responses/EmptySuccess' }
+  /api/v1/budgets:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }]
+    get:
+      summary: Resume the authenticated owner's budget
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/BudgetSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Create the authenticated owner's budget
+      security: [{ cookieAuth: [] }]
+      responses:
+        '201': { $ref: '#/components/responses/BudgetSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    get:
+      summary: Read a budget
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/BudgetSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Save resumable setup state
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SetupInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/BudgetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/categories:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    post:
+      summary: Create a category
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NameInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/BudgetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/categories/{categoryId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/CategoryId' }]
+    patch:
+      summary: Rename a category
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NameInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/BudgetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/categories/{categoryId}/archive:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/CategoryId' }]
+    post:
+      summary: Archive a category
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/BudgetSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/income:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Record realized income
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IncomeInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/income/{incomeId}/release:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IncomeId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Explicitly release full income
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/spending:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Record categorized spending
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SpendingInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/allocations:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Assign money
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AllocationInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/allocations/unassign:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Unassign money
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AllocationInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/allocations/move:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+    post:
+      summary: Move assignment between categories
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MoveInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/FinancialSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/summary:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/Month' }]
+    get:
+      summary: Read the canonical monthly financial summary
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SummarySuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/dashboard:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/Month' }]
+    get:
+      summary: Read canonical dashboard values
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SummarySuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sid
+      description: HttpOnly SameSite=Lax Path=/ session cookie; Secure is added in production.
   parameters:
-    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
-    ExpectedVersion: { name: If-Match, in: header, required: false, schema: { type: integer } }
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Optional caller correlation ID; every success and error envelope returns requestId.
+      schema: { type: string }
+    BudgetId:
+      name: budgetId
+      in: path
+      required: true
+      schema: { type: string }
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema: { type: string }
+    IncomeId:
+      name: incomeId
+      in: path
+      required: true
+      schema: { type: string }
+    Month:
+      name: month
+      in: query
+      required: true
+      description: Monthly view in YYYY-MM format.
+      schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Required for financial commands; the same key and payload replay the stored result.
+      schema: { type: string, minLength: 1 }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Optional expected version for optimistic concurrency; stale expected versions return 409. Weak or quoted integer ETags are accepted.
+      schema: { type: string }
+  responses:
+    UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
+    SessionSuccess: { description: Authenticated session; also sets the sid cookie, headers: { Set-Cookie: { description: Session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SessionEnvelope' } } } }
+    EmptySuccess: { description: Session revoked and cookie cleared, headers: { Set-Cookie: { description: Cleared session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/EmptyEnvelope' } } } }
+    BudgetSuccess: { description: Budget state, content: { application/json: { schema: { $ref: '#/components/schemas/BudgetEnvelope' } } } }
+    FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
+    SummarySuccess: { description: Monthly summary, content: { application/json: { schema: { $ref: '#/components/schemas/SummaryEnvelope' } } } }
+    ValidationError: { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    Conflict: { description: State or concurrency conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
   schemas:
-    SuccessEnvelope: { type: object, required: [data, requestId], properties: { data: {}, requestId: { type: string, format: uuid } } }
-    ErrorEnvelope: { type: object, required: [error], properties: { error: { type: object, required: [code, message, requestId] } } }
-    Money: { type: integer, description: Positive integer minor units }
+    SuccessEnvelope:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: {}
+        requestId: { type: string, minLength: 1, description: Non-empty request ID }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string, enum: [UNAUTHENTICATED, NOT_FOUND, CONFLICT, VALIDATION_ERROR] }
+            message: { type: string }
+            requestId: { type: string, minLength: 1, description: Non-empty request ID }
+    User: { type: object, required: [id, email], properties: { id: { type: string }, email: { type: string, format: email } } }
+    Session: { type: object, required: [user, sessionToken], properties: { user: { $ref: '#/components/schemas/User' }, sessionToken: { type: string, description: Opaque session token returned for this first slice } } }
+    Account: { type: object, required: [id, name, openingBalanceMinor], properties: { id: { type: string }, name: { type: string }, openingBalanceMinor: { type: integer } } }
+    Category: { type: object, required: [id, name, archived], properties: { id: { type: string }, name: { type: string }, archived: { type: boolean } } }
+    Budget: { type: object, required: [id, setupStep, timezone, version, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
+    Rta: { type: object, required: [amountMinor, openingBalanceMinor, releasedIncomeMinor, unreleasedIncomeMinor, priorCarryMinor, assignedMinor], properties: { amountMinor: { type: integer }, openingBalanceMinor: { type: integer }, releasedIncomeMinor: { type: integer }, unreleasedIncomeMinor: { type: integer }, priorCarryMinor: { type: integer }, assignedMinor: { type: integer } } }
+    CategorySummary: { allOf: [{ $ref: '#/components/schemas/Category' }], type: object, properties: { carryoverMinor: { type: integer }, assignedMinor: { type: integer }, activityMinor: { type: integer }, availableMinor: { type: integer } } }
+    FinancialSummary: { type: object, required: [month, accountBalanceMinor, rta, categories, version], properties: { month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, accountBalanceMinor: { type: integer }, rta: { $ref: '#/components/schemas/Rta' }, categories: { type: array, items: { $ref: '#/components/schemas/CategorySummary' } }, version: { type: integer } } }
+    RegisterInput: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string, minLength: 8 } } }
+    SignInInput: { $ref: '#/components/schemas/RegisterInput' }
+    SetupInput: { type: object, properties: { openingBalanceMinor: { type: integer }, accountName: { type: string }, accountType: { type: string, enum: [cash, checking] }, categories: { type: array, items: { type: string } } } }
+    NameInput: { type: object, required: [name], properties: { name: { type: string } } }
+    Money: { type: integer, minimum: 1, description: Positive integer minor-unit amount. }
+    IncomeInput: { type: object, required: [amountMinor], properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string } } }
+    SpendingInput: { type: object, required: [amountMinor, categoryId], properties: { amountMinor: { $ref: '#/components/schemas/Money' }, categoryId: { type: string }, date: { type: string } } }
+    AllocationInput: { type: object, required: [categoryId, amountMinor, month], properties: { categoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
+    MoveInput: { type: object, required: [sourceCategoryId, destinationCategoryId, amountMinor, month], properties: { sourceCategoryId: { type: string }, destinationCategoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
+    IncomeResult: { type: object, required: [id, amountMinor, released, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, released: { type: boolean }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
+    ReleaseResult: { type: object, required: [incomeId, releasedNowMinor, released, version], properties: { incomeId: { type: string }, releasedNowMinor: { type: integer }, released: { type: boolean }, version: { type: integer } } }
+    SpendingResult: { type: object, required: [id, amountMinor, categoryId, month, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, categoryId: { type: string }, month: { type: string }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
+    AllocationResult: { type: object, required: [id, categoryId, amountMinor, rtaMinor, assignedMinor, version], properties: { id: { type: string }, categoryId: { type: string }, amountMinor: { type: integer }, rtaMinor: { type: integer }, assignedMinor: { type: integer }, previousRtaMinor: { type: integer }, version: { type: integer } } }
+    MoveResult: { type: object, required: [id, source, destination, amountMinor, version], properties: { id: { type: string }, source: { type: object, properties: { assignedMinor: { type: integer } } }, destination: { type: object, properties: { assignedMinor: { type: integer } } }, amountMinor: { type: integer }, version: { type: integer } } }
+    FinancialResult: { oneOf: [{ $ref: '#/components/schemas/IncomeResult' }, { $ref: '#/components/schemas/ReleaseResult' }, { $ref: '#/components/schemas/SpendingResult' }, { $ref: '#/components/schemas/AllocationResult' }, { $ref: '#/components/schemas/MoveResult' }] }
+    UserEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/User' } } }
+    SessionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Session' } } }
+    EmptyEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { nullable: true } } }
+    BudgetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Budget' } } }
+    FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }
+    SummaryEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialSummary' } } }

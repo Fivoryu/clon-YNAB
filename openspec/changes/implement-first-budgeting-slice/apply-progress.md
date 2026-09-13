@@ -229,4 +229,27 @@ The identity/setup and financial restart durability corrections are independentl
 
 ## Current worktree note
 
-The implementation and test changes remain uncommitted. `.codegraph/`, `.pi/`, and an empty untracked `NUL` file are local/unreviewed artifacts and are excluded from the intended commit until their origin is explicitly resolved.
+The implementation and test changes remain uncommitted. `.codegraph/` and `.pi/` are local/unreviewed artifacts and are excluded from the intended commit. The transient empty `NUL` artifact was removed during cleanup.
+
+## PR2 API contract and Reports gates
+
+- OpenAPI now covers all implemented routes with request bodies, path/query/header parameters, DTO schemas, cookie security, request IDs, idempotency/version semantics, status/error envelopes, and unsupported-feature boundaries. Structural contract coverage passes.
+- `ReportService` is the canonical read/rebuild boundary for dashboard and month summary. It recalculates from authoritative financial events, preserves authorization-before-load, and has deterministic/restart/equivalence coverage.
+- Independent verification passed the API suite at 32/32 before web additions; contract and Reports focused suites passed.
+
+## PR2 web and Playwright gates
+
+- The web runtime is configured under `apps/web` with Next.js, same-origin `/api/v1` rewrites to the API, accessible setup/dashboard/activity controls, DTO-only rendering, idempotency/version headers, and no client-side financial formulas.
+- Chromium Playwright coverage passes repeatedly against the real Next server, API server, and PostgreSQL for registration, sign-in, setup, dashboard, income/release, assignment, and categorized spending.
+- `npm run typecheck:web`, `npm run build:web`, and the web source checks pass. Generated `.next/`, Playwright reports, and test results are ignored.
+
+## PR2 migration and final evidence
+
+- `npm run db:status` reports both migrations applied and the database up to date; `npm run db:validate` passes. Runtime tests observe the required tables and composite ownership constraints.
+- Migration evidence creates unique fixtures, reads authoritative events, rebuilds reports through a fresh service, and cleans up in `finally`.
+- `ROLLBACK.md` documents backup/preconditions and the exact rollback inventory/procedure. Destructive rollback was intentionally not executed against the shared development database.
+- Final independent verification passed migration tests 2/2, full API suite 34/34, database status/validation, web typecheck/build, and `git diff --check`.
+
+## Phase boundary
+
+The first-slice implementation gates are now verified. Remaining delivery action is the parent decision to include the uncommitted changes in a commit and push; `.codegraph/` and `.pi/` remain excluded. No unsupported YNAB features were added.
