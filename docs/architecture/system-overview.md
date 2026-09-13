@@ -45,6 +45,8 @@ Future adapters:
   Scheduler   → Scheduled module → transaction commands
 ```
 
+**Clone decision:** The API persistence boundary owns one canonical Prisma schema and migration history. This documentation does not specify a private YNAB schema.
+
 ## Backend module responsibilities
 
 | Module | Owns | Does not own |
@@ -75,68 +77,71 @@ HTTP request
 
 For a financial write, the API must not accept a client-provided final balance as truth. It accepts an intent such as `RecordTransaction` or `AssignMoney`; the server calculates the effects.
 
+**Clone decision:** The API is versioned at `/api/v1`, uses DTOs rather than ORM models, and returns intent-oriented financial commands. Success responses use `{data, requestId}`; errors use `{error:{code,message,requestId}}`. Stable categories map to `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `400 VALIDATION_ERROR`, `409 CONFLICT`, `422 INSUFFICIENT_AVAILABLE_FUNDS`, and `500 INTERNAL_ERROR`. Messages must not expose secrets, raw database errors, or unnecessary financial payloads.
+
 ## Data and consistency strategy
 
-PostgreSQL is the source of truth. A command that changes both an account and the budget must use a database transaction.
+**Clone decision:** PostgreSQL is authoritative. The API persistence boundary has one canonical Prisma schema and migration owner; duplicate schemas are not permitted. A command that changes both an account and the budget must use one PostgreSQL transaction.
+
+**Clone decision:** Setup/opening movement, assignments, moves, realized income, and categorized spending are first-slice mutating financial commands. Each carries an idempotency key: same-payload retries replay the same logical result, while a different payload with the same key returns `CONFLICT`. Stale writes use optimistic version checks and return `CONFLICT` rather than overwriting newer state.
 
 Recommended first approach:
 
 1. Store authoritative transaction and allocation movements.
 2. Calculate derived balances in domain services or database queries.
 3. Add cached read models only after profiling identifies a need.
-4. Provide a rebuild/reconciliation command for derived data.
+4. Provide a deterministic rebuild path for derived data.
 
 This favors correctness and explainability over premature optimization.
 
 ## Security boundaries
 
-- Passwords are never stored directly; use a well-tested password hashing library if local credentials are implemented.
-- Session or token cookies should be `httpOnly`, `secure` in production, and protected against CSRF where applicable.
-- Every budget-scoped resource must verify ownership or membership on the server.
+- **Clone decision:** The first slice uses local email/password and server-managed opaque sessions. Passwords use a well-tested password-hashing library.
+- **Clone decision:** Session cookies are `httpOnly`, `secure` in production, same-site/CSRF protected as applicable, explicitly server-expiring, and revoked on logout. No long-lived browser tokens are used.
+- **Clone decision:** External identity providers are deferred/out of MVP, not an implementation blocker.
+- **Clone decision:** Every budget-scoped resource must verify ownership or membership on the server. The first slice is one user-owned budget; future roles and collaboration remain deferred/Open question.
+- **Clone decision:** Foreign budgets and resources use a uniform non-disclosing `NOT_FOUND` response.
 - Never log access tokens, passwords, bank credentials, or full financial payloads unnecessarily.
 - Validate all monetary values and identifiers at the API boundary.
 - Use database constraints in addition to application checks.
 
 ## Error handling
 
-The API should return stable error categories rather than raw database errors:
+**Clone decision:** The API returns stable error categories rather than raw database errors:
 
-- `UNAUTHENTICATED`
-- `FORBIDDEN`
-- `NOT_FOUND`
-- `VALIDATION_ERROR`
-- `CONFLICT`
-- `INSUFFICIENT_AVAILABLE_FUNDS`
-- `INTERNAL_ERROR`
+- `UNAUTHENTICATED` → HTTP 401
+- `FORBIDDEN` → HTTP 403
+- `NOT_FOUND` → HTTP 404, including foreign budget/resource lookups
+- `VALIDATION_ERROR` → HTTP 400
+- `CONFLICT` → HTTP 409
+- `INSUFFICIENT_AVAILABLE_FUNDS` → HTTP 422
+- `INTERNAL_ERROR` → HTTP 500
 
-Error responses should include a request identifier for debugging without exposing sensitive data.
+**Clone decision:** Error responses use `{error:{code,message,requestId}}`; success responses use `{data,requestId}`. Messages and logs must not expose secrets, raw database errors, or unnecessary financial payloads.
 
 ## Testing strategy
+
+**Clone decision:** The first-slice verification gate is mandatory:
 
 ### Unit tests
 
 - money arithmetic;
-- category availability formulas;
-- split validation;
-- transfer rules;
-- month rollover;
-- target progress.
+- bounded RTA and Available calculations;
+- allocation and move rules.
 
 ### Integration tests
 
-- authorization across budgets;
-- atomic transaction writes;
-- repository constraints;
-- reconciliation behavior.
+- authorization isolation across budgets;
+- PostgreSQL atomicity;
+- idempotency replay and different-payload conflict;
+- optimistic concurrency and stale-write conflict;
+- deterministic derived-summary rebuild.
 
 ### End-to-end tests
 
-- create a budget;
-- add an account and starting balance;
-- create categories;
-- assign money;
-- record spending;
-- verify account and category summaries.
+- Playwright coverage of the primary journey: authenticate, create a budget, add an account and opening balance, create categories, assign money, record spending, and verify account/category/month summaries.
+
+CI must expose and run repository scripts for format check, lint, unit/integration tests, E2E where the environment permits, and build. **Open question:** No numeric coverage threshold is established; coverage remains a non-blocking target until agreed.
 
 ## Deployment shape
 
@@ -149,7 +154,7 @@ Docker Compose
 └── postgres
 ```
 
-A single deployable API is sufficient for the first version. Redis, a worker process, and object storage are optional future additions, not baseline dependencies.
+A single deployable API is sufficient for the first version. Redis, a worker process, and object storage are optional future additions, not baseline dependencies. **Clone decision:** Redis and workers are outside MVP.
 
 ## Architecture risks
 

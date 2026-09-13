@@ -1,10 +1,12 @@
-# Technology Stack Proposal
+# Technology Stack
 
 ## Recommendation
 
+**Clone decision — accepted for the first implementation:** Use the following modular-monolith stack for the first slice. Course, hosting, and later infrastructure refinements remain **Open question** where noted below.
+
 Use one language across the client and server: TypeScript. Choose mature, boring tools so the team spends its effort learning the budgeting domain instead of operating infrastructure.
 
-| Layer | Proposed technology | Reason |
+| Layer | Accepted first-slice technology | Reason |
 |---|---|---|
 | Web app | Next.js + React + TypeScript | Component model, routing, server/client flexibility, strong ecosystem. |
 | API | NestJS + TypeScript | Explicit modules, dependency injection, validation, OpenAPI support. |
@@ -14,7 +16,7 @@ Use one language across the client and server: TypeScript. Choose mature, boring
 | Validation | class-validator on API DTOs or Zod at shared boundaries | Reject invalid input close to the boundary. |
 | API contract | OpenAPI/Swagger | Makes endpoints inspectable and supports frontend coordination. |
 | Local environment | Docker Compose | Reproducible API, web, and database setup. |
-| Unit/integration tests | Jest or Vitest | Domain and API verification. |
+| Unit/integration tests | Jest | Domain and API verification. |
 | Browser tests | Playwright | Verifies the main budgeting workflow in a real browser. |
 | Formatting/linting | ESLint + Prettier | Shared code quality baseline. |
 
@@ -50,9 +52,11 @@ A monorepo is a good fit if the course team wants one repository and shared tool
 
 ## Data modeling guidelines
 
+- **Clone decision:** PostgreSQL is authoritative for financial state and history.
+- **Clone decision:** One canonical Prisma schema and migration owner belongs to the API persistence boundary; do not create duplicate schemas. This is a boundary decision, not a claim about a private YNAB schema.
 - Use UUIDs for public identifiers unless the course has a reason to prefer another strategy.
-- Use `BIGINT` or a decimal-safe representation for money in minor units.
-- Store dates deliberately: transaction date is a calendar/business date; timestamps are UTC.
+- Use `BIGINT` or a decimal-safe representation for money in integer minor units.
+- **Clone decision:** Store one explicit IANA budget timezone, defaulting to `UTC` for the first slice; transaction dates are date-only business dates and event timestamps are UTC. The browser timezone must not decide month boundaries.
 - Add `created_at` and `updated_at` to mutable records.
 - Use explicit status fields for archived, reconciled, scheduled, or deleted states.
 - Add foreign keys and unique constraints for budget ownership and external import identifiers.
@@ -60,21 +64,21 @@ A monorepo is a good fit if the course team wants one repository and shared tool
 
 ## API conventions
 
-- Version the API from the beginning, for example `/api/v1`.
-- Use resource-oriented routes for reads and intent-oriented commands for financial writes.
-- Return DTOs, not ORM models.
+- **Clone decision:** Version the API from the beginning at `/api/v1`.
+- **Clone decision:** Use resource-oriented routes for reads and intent-oriented commands for financial writes.
+- **Clone decision:** Return DTOs, not ORM models.
 - Use pagination for transaction lists.
-- Use consistent error responses.
-- Add idempotency support before implementing imports or repeated financial commands.
+- **Clone decision:** Use the stable JSON envelopes `{data, requestId}` for success and `{error:{code,message,requestId}}` for errors.
+- **Clone decision:** Map stable categories to conventional statuses: `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `400 VALIDATION_ERROR`, `409 CONFLICT`, `422 INSUFFICIENT_AVAILABLE_FUNDS`, and `500 INTERNAL_ERROR`.
+- **Clone decision:** Messages must not expose secrets, raw database errors, or unnecessary financial payloads.
+- **Clone decision:** All first-slice mutating financial commands use an idempotency key; same-payload replay succeeds and a different payload returns `CONFLICT`.
+- **Open question:** Exact endpoint names and DTO fields remain implementation-level choices to be traced during bounded SDD/OpenSpec; they must not be inferred as private YNAB details.
 
 ## Authentication choice
 
-For an academic MVP, two viable options exist:
+**Clone decision — accepted for the first slice:** Use local email/password with server-managed opaque sessions. Passwords use a well-tested password-hashing library. Session cookies are `httpOnly`, `secure` in production, and protected with same-site/CSRF measures as applicable; logout revokes the session, the server configures explicit expiry, and no long-lived browser tokens are used.
 
-1. local email/password with secure server-managed sessions;
-2. an external identity provider, if the course prioritizes product features over authentication learning.
-
-The default recommendation is server-managed sessions because it avoids placing long-lived tokens in browser storage. The choice must be recorded before implementation.
+**Clone decision:** External identity providers are deferred/out of MVP and are not an implementation blocker. Future roles and collaboration remain **Open question**.
 
 ## Dependency policy
 
@@ -100,4 +104,6 @@ A good alternative if the course or team is already centered on Java. The domain
 
 ## Decision status
 
-**Provisional.** Confirm team skills, course requirements, hosting constraints, and expected deliverables before freezing the stack in an OpenSpec change.
+**Accepted for the first implementation.** The first slice uses Next.js + React + TypeScript web, NestJS + TypeScript API, PostgreSQL, Prisma, Docker Compose, OpenAPI/Swagger, ESLint/Prettier, Jest, and Playwright. Redis, workers, Kafka, workflow engines, bank providers, and similar infrastructure additions remain outside MVP unless a later approved requirement needs them.
+
+**Open question:** Confirm course requirements, hosting constraints, and expected deliverables during bounded SDD/OpenSpec. These refinements do not reopen the accepted first-slice stack.

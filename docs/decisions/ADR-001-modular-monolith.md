@@ -1,22 +1,27 @@
 # ADR-001: Use a Modular Monolith for the First Version
 
-- **Status:** Proposed
+- **Status:** Accepted for the first implementation
 - **Date:** 2026-09-10
 - **Decision owners:** Project team
 
 ## Context
 
-The project is an academic YNAB clone at the research stage. The team needs to learn the budgeting domain, produce a working MVP, and preserve enough architectural structure to explain the system. There is no independent service boundary, scaling requirement, or operations team yet.
+The project is an academic YNAB clone preparing its first implementation. The team needs to learn the budgeting domain, produce a working first slice, and preserve enough architectural structure to explain the system. There is no independent service boundary, scaling requirement, or operations team that justifies distributed infrastructure.
 
 ## Decision
 
 Implement the first version as a modular monolith:
 
-- one web application;
-- one API application;
-- one PostgreSQL database;
+- one web application using Next.js, React, and TypeScript;
+- one API application using NestJS and TypeScript;
+- one authoritative PostgreSQL database accessed through Prisma;
+- one canonical Prisma schema and migration owner at the API persistence boundary;
 - explicit backend modules for identity, budgets, accounts, categories, transactions, planning, and reports;
+- Docker Compose for the local web/API/database shape;
+- OpenAPI/Swagger, ESLint/Prettier, Jest, and Playwright as the first-slice contract and verification baseline;
 - asynchronous workers only when a real scheduled or import requirement is accepted.
+
+**Clone decision:** This stack and modular-monolith boundary are accepted for the first slice. Redis and other infrastructure additions remain outside MVP. Course and hosting refinements remain **Open question** and do not block this first implementation decision.
 
 ## Consequences
 
@@ -39,6 +44,7 @@ Implement the first version as a modular monolith:
 - Modules communicate through application services or stable contracts, not each other's repositories.
 - Domain calculations do not depend on HTTP or UI code.
 - Database writes that affect multiple financial views are atomic.
+- First-slice mutating financial commands use idempotency keys, optimistic version checks, and deterministic derived-summary rebuilds.
 - New infrastructure requires a documented requirement and an ADR or updated decision record.
 - Reports consume read models or queries; they do not mutate authoritative financial state.
 
