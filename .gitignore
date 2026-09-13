@@ -1,2 +1,11 @@
 # Local Pi runtime state
 .atl/
+
+# Node.js dependencies and generated artifacts
+node_modules/
+dist/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

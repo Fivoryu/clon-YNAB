@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SetupStep {
+  ACCOUNT
+  CATEGORIES
+  COMPLETE
+}
+
+enum AccountKind {
+  CASH
+  CHECKING
+}
+
+enum FinancialEventKind {
+  OPENING_BALANCE
+  INCOME
+  INCOME_RELEASE
+  SPENDING
+  ASSIGNMENT
+  UNASSIGNMENT
+  MOVE
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  budget       Budget?
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model Budget {
+  id         String             @id @default(uuid()) @db.Uuid
+  ownerId    String             @unique @db.Uuid
+  timezone   String             @default("UTC")
+  setupStep  SetupStep          @default(ACCOUNT)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  owner      User               @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  account    Account?
+  categories Category[]
+  months     BudgetMonth[]
+  events     FinancialEvent[]
+  commands   CommandReceipt[]
+  @@index([timezone])
+}
+
+model Account {
+  id              String             @id @default(uuid()) @db.Uuid
+  budgetId        String             @unique @db.Uuid
+  name            String
+  kind            AccountKind
+  archived        Boolean            @default(false)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  budget          Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  openingBalances OpeningBalance[]
+  events          FinancialEvent[]   @relation("AccountEvents")
+      @@unique([budgetId, id])
+}
+
+model Category {
+  id                String           @id @default(uuid()) @db.Uuid
+  budgetId          String           @db.Uuid
+  name              String
+  archived          Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  budget            Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  events            FinancialEvent[] @relation("CategoryEvents")
+  sourceEvents      FinancialEvent[] @relation("SourceCategoryEvents")
+  destinationEvents FinancialEvent[] @relation("DestinationCategoryEvents")
+      @@unique([budgetId, id])
+  @@index([budgetId, archived])
+}
+
+model OpeningBalance {
+  id            String   @id @default(uuid()) @db.Uuid
+  accountId     String   @db.Uuid
+  amountMinor   BigInt
+  recordedAt    DateTime @default(now())
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  @@index([accountId, recordedAt])
+}
+
+model BudgetMonth {
+  id        String           @id @default(uuid()) @db.Uuid
+  budgetId  String           @db.Uuid
+  month     String
+  version   Int              @default(0)
+  budget    Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  @@unique([budgetId, month])
+}
+
+model FinancialEvent {
+  id                String             @id @default(uuid()) @db.Uuid
+  budgetId          String             @db.Uuid
+  accountId         String?            @db.Uuid
+  categoryId        String?            @db.Uuid
+  sourceCategoryId  String?            @db.Uuid
+  destinationCategoryId String?        @db.Uuid
+  relatedEventId    String?            @unique @db.Uuid
+  kind              FinancialEventKind
+  amountMinor       BigInt
+  businessDate      DateTime?          @db.Date
+  month             String?
+  createdAt         DateTime           @default(now())
+  budget            Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  account           Account?           @relation("AccountEvents", fields: [budgetId, accountId], references: [budgetId, id], onDelete: Restrict)
+  category          Category?          @relation("CategoryEvents", fields: [budgetId, categoryId], references: [budgetId, id], onDelete: Restrict)
+  sourceCategory    Category?          @relation("SourceCategoryEvents", fields: [budgetId, sourceCategoryId], references: [budgetId, id], onDelete: Restrict)
+  destinationCategory Category?        @relation("DestinationCategoryEvents", fields: [budgetId, destinationCategoryId], references: [budgetId, id], onDelete: Restrict)
+  relatedEvent      FinancialEvent?    @relation("ReleaseOf", fields: [budgetId, relatedEventId], references: [budgetId, id], onDelete: Restrict)
+  release           FinancialEvent?    @relation("ReleaseOf")
+  @@unique([budgetId, id])
+  @@unique([budgetId, relatedEventId])
+  @@index([budgetId, month, kind])
+  @@index([accountId, createdAt])
+  @@index([categoryId, month])
+}
+
+model CommandReceipt {
+  id          String   @id @default(uuid()) @db.Uuid
+  budgetId    String   @db.Uuid
+  idempotencyKey String
+  payloadDigest String
+  result      Json
+  createdAt   DateTime @default(now())
+  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  @@unique([budgetId, idempotencyKey])
+}

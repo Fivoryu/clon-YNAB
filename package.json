@@ -1,0 +1,20 @@
+{
+  "name": "ynab-modular-monolith",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test apps/api/test/*.test.ts",
+    "dev:api": "node --experimental-strip-types apps/api/src/server.ts",
+    "db:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0"
+  }
+}

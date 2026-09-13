@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+  title: YNAB first-slice API
+  version: 1.0.0
+servers:
+  - url: /
+paths:
+  /api/v1/auth/register: { post: { summary: Register, responses: { '201': { description: Created } } } }
+  /api/v1/auth/sign-in: { post: { summary: Sign in, responses: { '200': { description: Authenticated } } } }
+  /api/v1/auth/sign-out: { post: { summary: Revoke session, responses: { '200': { description: Revoked } } } }
+  /api/v1/budgets: { get: { summary: Resume owner budget }, post: { summary: Create one owner budget } }
+  /api/v1/budgets/{budgetId}: { put: { summary: Save setup }, get: { summary: Read budget } }
+  /api/v1/budgets/{budgetId}/categories: { post: { summary: Create category } }
+  /api/v1/budgets/{budgetId}/categories/{categoryId}: { patch: { summary: Rename category } }
+  /api/v1/budgets/{budgetId}/categories/{categoryId}/archive: { post: { summary: Archive category } }
+  /api/v1/budgets/{budgetId}/income: { post: { summary: Record realized income } }
+  /api/v1/budgets/{budgetId}/income/{incomeId}/release: { post: { summary: Explicitly release full income } }
+  /api/v1/budgets/{budgetId}/spending: { post: { summary: Record categorized spending } }
+  /api/v1/budgets/{budgetId}/allocations: { post: { summary: Assign money } }
+  /api/v1/budgets/{budgetId}/allocations/unassign: { post: { summary: Unassign money } }
+  /api/v1/budgets/{budgetId}/allocations/move: { post: { summary: Move assignment } }
+  /api/v1/budgets/{budgetId}/summary: { get: { summary: Read canonical monthly summary } }
+  /api/v1/budgets/{budgetId}/dashboard: { get: { summary: Read canonical dashboard values } }
+components:
+  parameters:
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+    ExpectedVersion: { name: If-Match, in: header, required: false, schema: { type: integer } }
+  schemas:
+    SuccessEnvelope: { type: object, required: [data, requestId], properties: { data: {}, requestId: { type: string, format: uuid } } }
+    ErrorEnvelope: { type: object, required: [error], properties: { error: { type: object, required: [code, message, requestId] } } }
+    Money: { type: integer, description: Positive integer minor units }
