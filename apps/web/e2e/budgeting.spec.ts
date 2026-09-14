@@ -59,3 +59,67 @@ test('completes the first-slice budgeting journey with server-reported values', 
   await expect(summaryValue('Account balance')).toHaveText('1350 minor units');
   await expect(category('Bills')).toContainText('Assigned: 600 · Available: 450 · Activity: -150');
 });
+
+test('supports focused transaction history correction and deletion', async ({ page }) => {
+  const email = `history-e2e-${randomUUID()}@example.com`;
+  const password = 'playwright-password';
+  const request = page.request;
+  const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
+    const response = await request.post(path, { data: body, headers: { 'Idempotency-Key': randomUUID(), ...headers } });
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ data: any }>;
+  };
+  await post('/api/v1/auth/register', { email, password });
+  await post('/api/v1/auth/sign-in', { email, password });
+  const created = await post('/api/v1/budgets', {});
+  const budgetId = created.data.id;
+  await request.put(`/api/v1/budgets/${budgetId}`, { data: { openingBalanceMinor: 500, categories: ['Bills', 'Food'] } });
+  const budget = await (await request.get(`/api/v1/budgets/${budgetId}`)).json() as { data: any };
+  const bills = budget.data.categories.find((category: any) => category.name === 'Bills').id;
+  const food = budget.data.categories.find((category: any) => category.name === 'Food').id;
+  await post(`/api/v1/budgets/${budgetId}/spending`, { amountMinor: 150, categoryId: bills, date: '2026-02-10' });
+  await post(`/api/v1/budgets/${budgetId}/spending`, { amountMinor: 40, categoryId: bills, date: '2026-02-12' });
+  await post(`/api/v1/budgets/${budgetId}/income`, { amountMinor: 1000, date: '2026-02-15' });
+  const history = await (await request.get(`/api/v1/budgets/${budgetId}/transactions`)).json() as { data: any };
+  const income = history.data.items.find((item: any) => item.kind === 'INCOME');
+  const seed = history.data.items.find((item: any) => item.amountMinor === 150);
+  const retained = history.data.items.find((item: any) => item.amountMinor === 40);
+  await post(`/api/v1/budgets/${budgetId}/income/${income.transactionId}/release`, {}, { 'If-Match': `W/"${history.data.version}"` });
+  await request.post(`/api/v1/budgets/${budgetId}/categories/${bills}/archive`);
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await expect(page.getByRole('heading', { name: 'Transaction history' })).toBeVisible();
+  const historySection = page.getByRole('region', { name: 'Transaction history' });
+  await historySection.getByRole('button', { name: 'Load history' }).click();
+  await expect(historySection.getByTestId(`transaction-${seed.transactionId}`)).toContainText('150 minor units');
+  await expect(historySection).toContainText('Bills (archived)');
+  await expect(historySection).toContainText('Protected · released income');
+
+  const seedRow = historySection.getByTestId(`transaction-${seed.transactionId}`);
+  await seedRow.getByRole('button', { name: 'Edit' }).click();
+  const editForm = seedRow.locator('form');
+  await editForm.getByLabel('Amount (minor units)').fill('175');
+  await editForm.getByLabel('Date').fill('2026-02-11');
+  await editForm.getByLabel('Category').selectOption(food);
+  await editForm.getByRole('button', { name: 'Save history edit' }).click();
+  await expect(page.getByRole('status')).toHaveText('Transaction updated.');
+  await expect(historySection.getByTestId(`transaction-${seed.transactionId}`)).toContainText('175 minor units');
+  await expect(historySection.getByTestId(`transaction-${seed.transactionId}`)).toContainText('Food');
+
+  const retainedRow = historySection.getByTestId(`transaction-${retained.transactionId}`);
+  await retainedRow.getByRole('button', { name: 'Edit' }).click();
+  const retainedEditForm = retainedRow.locator('form');
+  await retainedEditForm.getByLabel('Amount (minor units)').fill('45');
+  await retainedEditForm.getByRole('button', { name: 'Save history edit' }).click();
+  await expect(retainedRow).toContainText('Bills (archived)');
+
+  await retainedRow.getByRole('button', { name: 'Delete' }).click();
+  await expect(retainedRow.getByRole('textbox', { name: 'Delete reason (optional)' })).toBeVisible();
+  await retainedRow.getByRole('textbox', { name: 'Delete reason (optional)' }).fill('Entered by mistake');
+  await retainedRow.getByRole('button', { name: 'Confirm delete' }).click();
+  await expect(page.getByRole('status')).toHaveText('Transaction deleted.');
+  await expect(historySection.getByTestId(`transaction-${retained.transactionId}`)).toHaveCount(0);
+  const accountBalance = page.getByLabel('Month summary').locator('dt').filter({ hasText: /^Account balance$/ }).locator('..').locator('dd');
+  await expect(accountBalance).toHaveText('1325 minor units');
+});

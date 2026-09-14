@@ -22,3 +22,12 @@ test('development web runtime proxies same-origin API calls', () => {
   assert.match(nextConfig, /source:\s*['"]\/api\/v1\/:path\*['"]/);
   assert.match(nextConfig, /destination:\s*['"]http:\/\/localhost:3001\/api\/v1\/:path\*['"]/);
 });
+
+test('history workflow stays at the browser API boundary', () => {
+  for (const route of ['/transactions', 'Idempotency-Key', 'If-Match']) assert.match(page, new RegExp(route.replaceAll('/', '\\/')));
+  assert.match(page, /Transaction history/);
+  assert.match(page, /Load history/);
+  assert.match(page, /Keep current category/);
+  assert.match(page, /Confirm delete/);
+  assert.match(page, /crypto\.randomUUID\(\)/);
+});
