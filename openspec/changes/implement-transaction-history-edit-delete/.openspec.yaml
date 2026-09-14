@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-13
+goal: Add a bounded transaction-history slice for supported posted/working,
+  non-reconciled income and single-category spending
