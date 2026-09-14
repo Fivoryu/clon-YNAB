@@ -26,6 +26,12 @@ enum FinancialEventKind {
   ASSIGNMENT
   UNASSIGNMENT
   MOVE
+  TRANSACTION_DELETE
+}
+
+enum TransactionStatus {
+  POSTED
+  WORKING
 }
 
 model User {
@@ -35,6 +41,7 @@ model User {
   createdAt    DateTime  @default(now())
   sessions     Session[]
   budget       Budget?
+  deletionAudits TransactionDeletionAudit[]
 }
 
 model Session {
@@ -61,6 +68,7 @@ model Budget {
   months     BudgetMonth[]
   events     FinancialEvent[]
   commands   CommandReceipt[]
+  deletionAudits TransactionDeletionAudit[]
   @@index([timezone])
 }
 
@@ -119,6 +127,10 @@ model FinancialEvent {
   sourceCategoryId  String?            @db.Uuid
   destinationCategoryId String?        @db.Uuid
   relatedEventId    String?            @unique @db.Uuid
+  transactionId     String?            @db.Uuid
+  supersedesEventId String?            @db.Uuid
+  status            TransactionStatus?
+  reconciled        Boolean            @default(false)
   kind              FinancialEventKind
   amountMinor       BigInt
   businessDate      DateTime?          @db.Date
@@ -134,8 +146,24 @@ model FinancialEvent {
   @@unique([budgetId, id])
   @@unique([budgetId, relatedEventId])
   @@index([budgetId, month, kind])
+  @@index([budgetId, transactionId, createdAt])
   @@index([accountId, createdAt])
   @@index([categoryId, month])
+}
+
+model TransactionDeletionAudit {
+  id String @id @default(uuid()) @db.Uuid
+  budgetId String @db.Uuid
+  actorId String @db.Uuid
+  transactionId String @db.Uuid
+  requestId String?
+  reason String?
+  idempotencyKey String
+  createdAt DateTime @default(now())
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@unique([budgetId, idempotencyKey])
+  @@index([budgetId, transactionId, createdAt])
 }
 
 model CommandReceipt {

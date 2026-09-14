@@ -9,7 +9,7 @@ import { ReportService } from '../src/reports/report-service.ts';
 
 const password = 'correct horse';
 const prisma = new PrismaClient();
-const options = (idempotencyKey: string) => ({ idempotencyKey });
+const options = (idempotencyKey: string, expectedVersion?: number) => ({ idempotencyKey, expectedVersion });
 
 const prepare = () => {
   const app = new BudgetApp();
@@ -72,6 +72,28 @@ test('report service rebuilds deterministically from authoritative state', () =>
   };
   const service = new ReportService();
   assert.deepEqual(service.read(state, '2026-02'), service.read(state, '2026-02'));
+});
+
+test('reports consume edited and deleted effective history without stale effects', async () => {
+  const { app, token, budget } = prepare();
+  const category = budget.categories[0].id;
+  const income = (await app.recordIncome(token, budget.id, { amountMinor: 500, date: '2026-02-01' }, undefined, options('effective-income'))).data;
+  const spending = (await app.recordSpending(token, budget.id, { amountMinor: 200, categoryId: category, date: '2026-02-01' }, undefined, options('effective-spending'))).data;
+  app.archiveCategory(token, budget.id, category);
+  await app.editTransaction(token, budget.id, spending.id, { amountMinor: 125, date: '2026-02-10' }, undefined, options('effective-edit', 2));
+  const edited = (await app.getFinancialSummary(token, budget.id, '2026-02')).data;
+  assert.equal(edited.accountBalanceMinor, 1375);
+  assert.equal(edited.categories.find(c => c.id === category)?.activityMinor, -125);
+  assert.equal(edited.categories.find(c => c.id === category)?.archived, true);
+  const replacementCategory = budget.categories[1].id;
+  await app.editTransaction(token, budget.id, spending.id, { categoryId: replacementCategory }, undefined, options('effective-category', 3));
+  const replaced = (await app.getFinancialSummary(token, budget.id, '2026-02')).data;
+  assert.ok(Math.abs(replaced.categories.find(c => c.id === category)?.activityMinor ?? 0) === 0);
+  assert.equal(replaced.categories.find(c => c.id === replacementCategory)?.activityMinor, -125);
+  await app.deleteTransaction(token, budget.id, income.id, { confirmed: true, reason: 'mistake' }, undefined, options('effective-delete', 4));
+  const deleted = (await app.getFinancialSummary(token, budget.id, '2026-02')).data;
+  assert.equal(deleted.accountBalanceMinor, 875);
+  assert.equal(deleted.rta.unreleasedIncomeMinor, 0);
 });
 
 test('foreign report access remains NOT_FOUND', async () => {

@@ -1,5 +1,6 @@
 import { calculateAccountBalance, calculateCategory, calculateRta, positiveRollover } from '../planning/engine.ts';
 import type { FinancialEvent, FinancialState } from '../persistence/financial-store.ts';
+import { foldEffectiveHistory } from '../planning/transaction-history.ts';
 
 export type FinancialSummary = {
   month: string;
@@ -11,6 +12,7 @@ export type FinancialSummary = {
 
 export class ReportService {
   read(state: FinancialState, requestedMonth: string, events: FinancialEvent[] = state.events): FinancialSummary {
+    if (events === state.events && state.rawEvents) events = foldEffectiveHistory(state.rawEvents);
     const income = events.filter(e => e.kind === 'INCOME' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0);
     const released = events.filter(e => e.kind === 'INCOME_RELEASE' && e.month === requestedMonth).reduce((sum, e) => sum + e.amountMinor, 0);
     const accountIncome = events.filter(e => e.kind === 'INCOME').reduce((sum, e) => sum + e.amountMinor, 0);

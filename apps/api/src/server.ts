@@ -32,6 +32,11 @@ export const createServer = (app = new BudgetApp(Date.now, new PrismaBudgetStore
     const release = action?.match(/^income\/([^/]+)\/release$/);
     if (budgetId && release?.[1] && req.method === 'POST') return json(res, 200, await app.releaseIncome(token, budgetId, release[1], requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'spending') return json(res, 201, await app.recordSpending(token, budgetId, input, requestId, commandOptions(req)));
+    if (budgetId && req.method === 'GET' && action === 'transactions') return json(res, 200, await app.listTransactions(token, budgetId, url.searchParams.get('month') || undefined, requestId));
+    const transaction = action?.match(/^transactions\/([^/]+)$/);
+    if (budgetId && transaction?.[1] && req.method === 'GET') return json(res, 200, await app.getTransaction(token, budgetId, transaction[1], requestId));
+    if (budgetId && transaction?.[1] && req.method === 'PATCH') return json(res, 200, await app.editTransaction(token, budgetId, transaction[1], input, requestId, commandOptions(req)));
+    if (budgetId && transaction?.[1] && req.method === 'DELETE') return json(res, 200, await app.deleteTransaction(token, budgetId, transaction[1], input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations') return json(res, 200, await app.assign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/unassign') return json(res, 200, await app.unassign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/move') return json(res, 200, await app.move(token, budgetId, input, requestId, commandOptions(req)));

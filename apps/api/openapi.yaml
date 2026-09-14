@@ -7,8 +7,8 @@ info:
     realized income, explicit income release, categorized spending, assignments,
     unassignments, moves, monthly summaries, and dashboard values. Transfers,
     splits, cards, reconciliation, targets, scheduled transactions, future income,
-    refunds, reimbursements, returns, edits, deletes, and cleared/pending/uncleared
-    states are unsupported and are not part of this contract.
+    refunds, reimbursements, returns, and cleared/pending/uncleared states remain unsupported
+    and are not part of this contract. Transaction history correction is limited to the routes below.
 servers:
   - url: /
 paths:
@@ -138,6 +138,48 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/transactions:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    get:
+      summary: List effective transaction history
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MonthOptional' }]
+      responses:
+        '200': { $ref: '#/components/responses/TransactionListSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/transactions/{transactionId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/TransactionId' }]
+    get:
+      summary: Read one effective transaction
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/TransactionSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Edit an eligible transaction
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionEditInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/TransactionSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Delete an eligible transaction after explicit confirmation
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionDeleteInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/DeleteSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/allocations:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
     post:
@@ -223,11 +265,22 @@ components:
       in: path
       required: true
       schema: { type: string }
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema: { type: string }
     Month:
       name: month
       in: query
       required: true
       description: Monthly view in YYYY-MM format.
+      schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+    MonthOptional:
+      name: month
+      in: query
+      required: false
+      description: Optional history filter in YYYY-MM format.
       schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
     IdempotencyKey:
       name: Idempotency-Key
@@ -247,6 +300,9 @@ components:
     EmptySuccess: { description: Session revoked and cookie cleared, headers: { Set-Cookie: { description: Cleared session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/EmptyEnvelope' } } } }
     BudgetSuccess: { description: Budget state, content: { application/json: { schema: { $ref: '#/components/schemas/BudgetEnvelope' } } } }
     FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
+    TransactionListSuccess: { description: Effective transaction history, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionListEnvelope' } } } }
+    TransactionSuccess: { description: Effective transaction result, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionEnvelope' } } } }
+    DeleteSuccess: { description: Deleted transaction result, content: { application/json: { schema: { $ref: '#/components/schemas/DeleteEnvelope' } } } }
     SummarySuccess: { description: Monthly summary, content: { application/json: { schema: { $ref: '#/components/schemas/SummaryEnvelope' } } } }
     ValidationError: { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
@@ -287,6 +343,12 @@ components:
     SpendingInput: { type: object, required: [amountMinor, categoryId], properties: { amountMinor: { $ref: '#/components/schemas/Money' }, categoryId: { type: string }, date: { type: string } } }
     AllocationInput: { type: object, required: [categoryId, amountMinor, month], properties: { categoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
     MoveInput: { type: object, required: [sourceCategoryId, destinationCategoryId, amountMinor, month], properties: { sourceCategoryId: { type: string }, destinationCategoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
+    TransactionEditInput: { type: object, minProperties: 1, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, categoryId: { type: string } } }
+    TransactionDeleteInput: { type: object, required: [confirmed], properties: { confirmed: { type: boolean, enum: [true] }, reason: { type: string } } }
+    TransactionHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, state], properties: { transactionId: { type: string }, kind: { type: string, enum: [INCOME, SPENDING] }, date: { type: string, format: date }, amountMinor: { type: integer }, accountId: { type: string }, category: { nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }] }, createdAt: { type: string }, state: { type: string, enum: [ELIGIBLE, PROTECTED] } } }
+    TransactionListResult: { type: object, required: [items, version], properties: { items: { type: array, items: { $ref: '#/components/schemas/TransactionHistoryItem' } }, version: { type: integer } } }
+    TransactionResult: { type: object, required: [item, version], properties: { item: { $ref: '#/components/schemas/TransactionHistoryItem' }, version: { type: integer } } }
+    DeleteResult: { type: object, required: [id, deleted, version], properties: { id: { type: string }, deleted: { type: boolean, enum: [true] }, version: { type: integer } } }
     IncomeResult: { type: object, required: [id, amountMinor, released, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, released: { type: boolean }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
     ReleaseResult: { type: object, required: [incomeId, releasedNowMinor, released, version], properties: { incomeId: { type: string }, releasedNowMinor: { type: integer }, released: { type: boolean }, version: { type: integer } } }
     SpendingResult: { type: object, required: [id, amountMinor, categoryId, month, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, categoryId: { type: string }, month: { type: string }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
@@ -298,4 +360,7 @@ components:
     EmptyEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { nullable: true } } }
     BudgetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Budget' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }
+    TransactionListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionListResult' } } }
+    TransactionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionResult' } } }
+    DeleteEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/DeleteResult' } } }
     SummaryEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialSummary' } } }

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { applyAssignment, calculateAccountBalance, moveAssignment, monthForDate, releaseIncome, unassign } from './planning/engine.ts';
+import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, parseTransactionDate } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
@@ -12,6 +13,9 @@ export type Category = { id: string; name: string; archived: boolean };
 export type Budget = { id: string; setupStep: 'ACCOUNT' | 'CATEGORIES' | 'COMPLETE'; timezone: 'UTC'; version: number; account: { id: string; name: string; openingBalanceMinor: number } | null; categories: Category[] };
 export type SetupInput = { openingBalanceMinor?: number; accountName?: string; accountType?: string; categories?: string[] };
 export type CommandOptions = { idempotencyKey?: string; expectedVersion?: number };
+export type TransactionEditInput = { amountMinor?: unknown; date?: unknown; categoryId?: unknown };
+export type TransactionDeleteInput = { confirmed?: unknown; reason?: unknown };
+export type TransactionHistoryItem = { transactionId: string; kind: 'INCOME' | 'SPENDING'; date: string; amountMinor: number; accountId?: string; category?: Category | null; createdAt?: string; state: 'ELIGIBLE' | 'PROTECTED' };
 export type { FinancialSummary };
 
 export class ApiError extends Error {
@@ -112,7 +116,7 @@ export class BudgetApp {
 
   async recordIncome(token: string, budgetId: string, input: { amountMinor: unknown; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'income', input, requestId, options, (budget, events, version) => {
-      this.ready(budget); const value = amount(input.amountMinor); const id = randomUUID(); events.push({ id, kind: 'INCOME', amountMinor: value, month: dateMonth(input.date, budget.timezone) });
+      this.ready(budget); const value = amount(input.amountMinor); const id = randomUUID(); const parsed = typeof input.date === 'string' ? parseTransactionDate(input.date, budget.timezone) : undefined; events.push({ id, transactionId: id, kind: 'INCOME', amountMinor: value, month: parsed?.month ?? dateMonth(input.date, budget.timezone), ...(parsed ? { businessDate: parsed.date } : {}), accountId: budget.account!.id, status: 'POSTED', reconciled: false, createdAt: new Date(this.now()).toISOString() });
       return { id, amountMinor: value, released: false, accountBalanceMinor: this.balance(budget, events), version };
     });
   }
@@ -127,8 +131,8 @@ export class BudgetApp {
   }
   async recordSpending(token: string, budgetId: string, input: { amountMinor: unknown; categoryId: string; date?: unknown }, requestId?: string, options: CommandOptions = {}) {
     return this.financial(token, budgetId, 'spending', input, requestId, options, (budget, events, version) => {
-      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const monthValue = dateMonth(input.date, budget.timezone); const id = randomUUID();
-      events.push({ id, kind: 'SPENDING', amountMinor: value, categoryId: input.categoryId, month: monthValue }); return { id, amountMinor: value, categoryId: input.categoryId, month: monthValue, accountBalanceMinor: this.balance(budget, events), version };
+      this.ready(budget); this.activeCategory(budget, input.categoryId); const value = amount(input.amountMinor); const parsed = typeof input.date === 'string' ? parseTransactionDate(input.date, budget.timezone) : undefined; const monthValue = parsed?.month ?? dateMonth(input.date, budget.timezone); const id = randomUUID();
+      events.push({ id, transactionId: id, kind: 'SPENDING', amountMinor: value, categoryId: input.categoryId, month: monthValue, ...(parsed ? { businessDate: parsed.date } : {}), accountId: budget.account!.id, status: 'POSTED', reconciled: false, createdAt: new Date(this.now()).toISOString() }); return { id, amountMinor: value, categoryId: input.categoryId, month: monthValue, accountBalanceMinor: this.balance(budget, events), version };
     });
   }
   async assign(token: string, budgetId: string, input: { categoryId: string; amountMinor: unknown; month: string }, requestId?: string, options: CommandOptions = {}) {
@@ -150,19 +154,57 @@ export class BudgetApp {
       const id = randomUUID(); events.push({ id, kind: 'MOVE', amountMinor: value, sourceCategoryId: input.sourceCategoryId, destinationCategoryId: input.destinationCategoryId, month: monthValue }); return { id, ...moveAssignment({ assignedMinor: source.assignedMinor }, { assignedMinor: state.categories.find(c => c.id === input.destinationCategoryId)!.assignedMinor }, value), version };
     });
   }
+  async listTransactions(token: string, budgetId: string, requestedMonth?: string, requestId?: string) {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const filter = requestedMonth ? month(requestedMonth) : undefined;
+    try { const state = await this.financialStore.load(user.id, budgetId); const items = this.historyItems(state).filter(item => !filter || item.date.slice(0, 7) === filter); return ok({ items, version: state.version }, requestId); } catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
+  }
+  async getTransaction(token: string, budgetId: string, transactionId: string, requestId?: string) {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    try { const state = await this.financialStore.load(user.id, budgetId); const item = this.historyItems(state).find(candidate => candidate.transactionId === transactionId); if (!item) throw new ApiError('NOT_FOUND', 'Resource not found'); return ok({ item, version: state.version }, requestId); } catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
+  }
+  async editTransaction(token: string, budgetId: string, transactionId: string, input: TransactionEditInput, requestId?: string, options: CommandOptions = {}) {
+    return this.financial(token, budgetId, 'transaction-edit', { transactionId, input, expectedVersion: options.expectedVersion }, requestId, options, (budget, events, version, append = () => {}) => {
+      this.ready(budget); const current = this.findTransaction(events, transactionId); if (!current) throw new ApiError('NOT_FOUND', 'Resource not found'); this.ensureEligible(current, budget, events);
+      if (!input || typeof input !== 'object' || Object.keys(input).length === 0 || Object.keys(input).some(key => !['amountMinor', 'date', 'categoryId'].includes(key))) throw new ApiError('VALIDATION_ERROR', 'Unsupported transaction edit field');
+      if (current.kind === 'INCOME' && input.categoryId !== undefined) throw new ApiError('VALIDATION_ERROR', 'Income cannot have a category');
+      const parsed = input.date === undefined ? undefined : (() => { if (typeof input.date !== 'string') throw new ApiError('VALIDATION_ERROR', 'date is invalid'); try { return parseTransactionDate(input.date, budget.timezone); } catch { throw new ApiError('VALIDATION_ERROR', 'date is invalid'); } })();
+      let category: Category | undefined;
+      if (input.categoryId !== undefined) { if (typeof input.categoryId !== 'string') throw new ApiError('VALIDATION_ERROR', 'categoryId is invalid'); category = budget.categories.find(candidate => candidate.id === input.categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (category.archived && category.id !== current.categoryId) throw new ApiError('CONFLICT', 'Replacement category must be active'); }
+      let replacement: FinancialEvent;
+      try { replacement = {
+            ...buildReplacement(current, { amountMinor: input.amountMinor as number | undefined, ...(parsed ? { businessDate: parsed.date } : {}), ...(input.categoryId !== undefined ? { categoryId: input.categoryId as string } : {}), timezone: budget.timezone }, category ? { categoryId: category.id, categoryBudgetId: budget.id, categoryArchived: category.archived, budgetId: budget.id } : undefined),
+            createdAt: new Date(this.now()).toISOString(),
+          }; } catch (error) { if (error instanceof Error && error.message.startsWith('CONFLICT:')) throw new ApiError('CONFLICT', error.message.slice(9)); if (error instanceof Error) throw new ApiError('VALIDATION_ERROR', error.message); throw error; }
+      events.splice(events.indexOf(current), 1, replacement); append(replacement); return { item: this.historyItem(replacement, budget, events), version };
+    }, undefined, true);
+  }
+  async deleteTransaction(token: string, budgetId: string, transactionId: string, input: TransactionDeleteInput, requestId?: string, options: CommandOptions = {}) {
+    return this.financial(token, budgetId, 'transaction-delete', { transactionId, input, expectedVersion: options.expectedVersion }, requestId, options, (budget, events, version, append = () => {}) => {
+      this.ready(budget); const current = this.findTransaction(events, transactionId); if (!current) throw new ApiError('NOT_FOUND', 'Resource not found'); this.ensureEligible(current, budget, events);
+      if (!input || input.confirmed !== true || Object.keys(input).some(key => !['confirmed', 'reason'].includes(key))) throw new ApiError('VALIDATION_ERROR', 'Deletion confirmation is required'); if (input.reason !== undefined && typeof input.reason !== 'string') throw new ApiError('VALIDATION_ERROR', 'reason must be a string');
+      const tombstone = { ...buildDeleteTombstone(current), status: current.status ?? 'POSTED', reconciled: false } as FinancialEvent; events.splice(events.indexOf(current), 1); append(tombstone); return { id: transactionId, deleted: true, version };
+    }, userId => ({ actorId: userId, transactionId, requestId, reason: typeof input?.reason === 'string' ? input.reason : undefined }), true);
+  }
   async getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
   async getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
 
-  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number) => T) {
-    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required');
+  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false) {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); if (requireVersion && !Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
     try {
-      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work });
+      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(audit ? { deletionAudit: audit(user.id) } : {}) });
       return ok(stored.result, requestId);
     } catch (error) {
       if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
       throw error;
     }
   }
+  private historyItems(state: FinancialState) { return state.events.filter(event => event.kind === 'INCOME' || event.kind === 'SPENDING').map(event => this.historyItem(event, state, state.events)).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.transactionId.localeCompare(a.transactionId)); }
+  private historyItem(event: FinancialEvent, state: FinancialState, events: FinancialEvent[]): TransactionHistoryItem {
+    const transactionId = event.transactionId ?? event.id; const category = event.categoryId ? state.categories.find(candidate => candidate.id === event.categoryId) : undefined; const protectedIncome = event.kind === 'INCOME' && events.some(candidate => candidate.kind === 'INCOME_RELEASE' && (candidate.relatedEventId === event.id || candidate.relatedEventId === transactionId));
+    return { transactionId, kind: event.kind as 'INCOME' | 'SPENDING', date: event.businessDate ?? `${event.month ?? '1970-01'}-01`, amountMinor: event.amountMinor, ...(event.accountId ? { accountId: event.accountId } : {}), ...(event.kind === 'SPENDING' ? { category: category ? { id: category.id, name: category.name, archived: category.archived } : null } : {}), ...(event.createdAt ? { createdAt: event.createdAt } : {}), state: protectedIncome ? 'PROTECTED' : 'ELIGIBLE' };
+  }
+  private findTransaction(events: FinancialEvent[], id: string) { return events.find(event => (event.transactionId ?? event.id) === id && (event.kind === 'INCOME' || event.kind === 'SPENDING')); }
+  private ensureEligible(event: FinancialEvent, budget: FinancialState, events: FinancialEvent[]) { const released = event.kind === 'INCOME' && events.some(candidate => candidate.kind === 'INCOME_RELEASE' && (candidate.relatedEventId === event.id || candidate.relatedEventId === (event.transactionId ?? event.id))); try { assertEligibleTransaction(event, { supportedAccountId: budget.account?.id ?? '', released }); } catch (error) { throw new ApiError('CONFLICT', error instanceof Error ? error.message.replace(/^CONFLICT:\s*/, '') : 'Transaction is not eligible'); } }
   private async readSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const requested = month(requestedMonth);
     try {
