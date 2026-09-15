@@ -1,10 +1,11 @@
-import { calculateAccountBalance, calculateCategory, calculateRta, positiveRollover } from '../planning/engine.ts';
+import { calculateAccountBalances, calculateCategory, calculateRta, positiveRollover, type AccountState } from '../planning/engine.ts';
 import type { FinancialEvent, FinancialState } from '../persistence/financial-store.ts';
 import { foldEffectiveHistory } from '../planning/transaction-history.ts';
 
 export type FinancialSummary = {
   month: string;
   accountBalanceMinor: number;
+  accounts: ReturnType<typeof calculateAccountBalances>;
   rta: ReturnType<typeof calculateRta>;
   categories: (FinancialState['categories'][number] & ReturnType<typeof calculateCategory>)[];
   version: number;
@@ -20,10 +21,14 @@ export class ReportService {
     const prior = this.categoryCarry(state, requestedMonth, events);
     const assigned = events.filter(e => e.month === requestedMonth && (e.kind === 'ASSIGNMENT' || e.kind === 'UNASSIGNMENT')).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' ? e.amountMinor : -e.amountMinor), 0);
     const categories = state.categories.map(category => ({ ...category, ...this.categoryValues(state, category.id, requestedMonth, events) }));
+    const sourceAccounts: AccountState[] = state.accounts ?? (state.account ? [{ ...state.account, kind: 'CASH', archived: state.account.archived ?? false }] : []);
+    const accounts = calculateAccountBalances(sourceAccounts, events.filter(event => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'].includes(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN', amountMinor: event.amountMinor })));
+    const openingBalanceMinor = sourceAccounts.reduce((sum, account) => sum + account.openingBalanceMinor, 0);
     return {
       month: requestedMonth,
-      accountBalanceMinor: calculateAccountBalance({ openingBalanceMinor: state.account?.openingBalanceMinor ?? 0, incomeMinor: accountIncome, spendingMinor: spending }),
-      rta: calculateRta({ openingBalanceMinor: state.account?.openingBalanceMinor ?? 0, releasedIncomeMinor: released, unreleasedIncomeMinor: income - released, priorCarryMinor: prior, assignedMinor: assigned }),
+      accountBalanceMinor: accounts.reduce((sum, account) => sum + account.balanceMinor!, 0),
+      accounts,
+      rta: calculateRta({ openingBalanceMinor, releasedIncomeMinor: released, unreleasedIncomeMinor: income - released, priorCarryMinor: prior, assignedMinor: assigned }),
       categories,
       version: state.version,
     };

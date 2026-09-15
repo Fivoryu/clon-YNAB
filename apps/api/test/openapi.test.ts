@@ -67,3 +67,28 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
   assert.match(document, /month[\s\S]*?YYYY-MM/);
   assert.match(document, /transfer[\s\S]*?reconciliation[\s\S]*?unsupported/i);
 });
+
+test('OpenAPI documents the bounded multi-account and transfer contract', () => {
+  for (const [path, method] of [
+    ['/api/v1/budgets/{budgetId}/accounts', 'post'],
+    ['/api/v1/budgets/{budgetId}/accounts/{accountId}', 'patch'],
+    ['/api/v1/budgets/{budgetId}/accounts/{accountId}/archive', 'post'],
+    ['/api/v1/budgets/{budgetId}/transfers', 'post'],
+  ]) {
+    const block = operationBlock(path, method);
+    assert.match(block, /IdempotencyKey/);
+    assert.match(block, /IfMatch/);
+    assert.match(block, /cookieAuth/);
+    assert.match(block, /ValidationError/);
+    assert.match(block, /NotFound/);
+    assert.match(block, /Conflict/);
+  }
+  assert.match(document, /accounts:\s*\{ type: array, items: \{ \$ref: '#\/components\/schemas\/Account' \} \}/);
+  assert.match(document, /accountBalanceMinor:[^\n]*type: integer/);
+  assert.match(document, /balanceMinor:[^\n]*type: integer/);
+  assert.match(document, /TransferInput:[\s\S]*sourceAccountId[\s\S]*destinationAccountId[\s\S]*amountMinor[\s\S]*date/);
+  assert.match(document, /TransferHistoryItem:[\s\S]*kind:[^\n]*TRANSFER[\s\S]*sourceAccount[\s\S]*destinationAccount/);
+  assert.match(document, /FinancialResult:[\s\S]*TransferResult/);
+  assert.match(document, /InternalError/);
+  assert.doesNotMatch(document, /\/api\/v1\/budgets\/\{budgetId\}\/\/(?:imports|cards|splits|reconciliation)/i);
+});

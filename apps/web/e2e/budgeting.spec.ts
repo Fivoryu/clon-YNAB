@@ -123,3 +123,64 @@ test('supports focused transaction history correction and deletion', async ({ pa
   const accountBalance = page.getByLabel('Month summary').locator('dt').filter({ hasText: /^Account balance$/ }).locator('..').locator('dd');
   await expect(accountBalance).toHaveText('1325 minor units');
 });
+
+test('integrates account lifecycle and transfers from server projections', async ({ page }) => {
+  const email = `accounts-e2e-${randomUUID()}@example.com`;
+  const password = 'playwright-password';
+  const request = page.request;
+  const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
+    const response = await request.post(path, { data: body, headers: { 'Idempotency-Key': randomUUID(), ...headers } });
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ data: any }>;
+  };
+  await post('/api/v1/auth/register', { email, password });
+  await post('/api/v1/auth/sign-in', { email, password });
+  const created = await post('/api/v1/budgets', {});
+  const budgetId = created.data.id;
+  await request.put(`/api/v1/budgets/${budgetId}`, { data: { openingBalanceMinor: 1000, accountName: 'Checking', categories: ['Bills'] } });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts', exact: true })).toBeVisible();
+  const accounts = page.getByRole('region', { name: 'Accounts' });
+  await expect(accounts.getByText('Checking', { exact: true })).toBeVisible();
+  const summary = page.getByLabel('Month summary');
+  const rta = () => summary.getByText(/Ready to assign/).locator('..');
+  const category = () => summary.getByRole('listitem').filter({ hasText: 'Bills' });
+  await accounts.getByRole('button', { name: 'Create account' }).click();
+  await accounts.getByLabel('New account name').fill('Cash');
+  await accounts.getByLabel('New account kind').selectOption('cash');
+  await accounts.getByRole('button', { name: 'Save account' }).click();
+  await expect(accounts.getByText('Cash', { exact: true })).toBeVisible();
+  await accounts.getByRole('button', { name: 'Create account' }).click();
+  await accounts.getByLabel('New account name').fill('Archive me');
+  await accounts.getByLabel('New account kind').selectOption('cash');
+  await accounts.getByRole('button', { name: 'Save account' }).click();
+  const archived = accounts.getByTestId(/account-/).filter({ hasText: 'Archive me' });
+  await archived.getByRole('button', { name: 'Archive' }).click();
+  await expect(archived).toContainText('Archived');
+
+  await page.getByRole('button', { name: 'Load month summary' }).click();
+  const beforeRta = await rta().locator('dd').innerText();
+  const beforeCategory = await category().locator('span').innerText();
+  await page.getByLabel('Transfer source').selectOption({ label: 'Checking' });
+  await page.getByLabel('Transfer destination').selectOption({ label: 'Cash' });
+  await page.getByLabel('Transfer amount (minor units)').fill('250');
+  await page.getByLabel('Transfer date').fill('2026-03-15');
+  await page.getByRole('button', { name: 'Record transfer' }).click();
+  await expect(page.getByRole('status')).toHaveText('Transfer recorded.');
+  await expect(rta().locator('dd')).toHaveText(beforeRta);
+  await expect(category().locator('span')).toHaveText(beforeCategory);
+  await expect(page.getByText('Checking · 750 minor units')).toBeVisible();
+  await expect(page.getByText('Cash · 250 minor units')).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await page.getByRole('button', { name: 'Load history' }).click();
+  await expect(page.getByRole('list', { name: 'Transaction history' })).toContainText('Transfer');
+  await expect(page.getByRole('list', { name: 'Transaction history' }).getByText('250 minor units')).toHaveCount(1);
+      await expect(page.getByLabel('History search')).toBeVisible();
+      await expect(page.getByLabel('History account')).toBeVisible();
+      await expect(page.getByLabel('Payee')).toHaveCount(3);
+      await expect(page.getByLabel('Memo')).toHaveCount(3);
+});

@@ -76,3 +76,43 @@ test('delete requires confirmation, protects released income, and hides foreign 
   const hidden = await http(app, foreign, `/api/v1/budgets/${budget.id}/transactions/${income.id}`);
   assert.equal(hidden.status, 404);
 });
+
+test('metadata is normalized on commands, preserved on omitted edits, and clearable', async () => {
+  const { app, token, budget } = prepare();
+  const income = (await app.recordIncome(token, budget.id, { amountMinor: 50, date: '2026-02-01', payee: '  Alice  ', memo: '\u2003Quarterly\u2003' }, undefined, options('metadata-income'))).data as any;
+  assert.equal(income.payee, 'Alice');
+  assert.equal(income.memo, 'Quarterly');
+  const kept = (await app.editTransaction(token, budget.id, income.id, { amountMinor: 60 }, undefined, options('metadata-keep', 1))).data as any;
+  assert.equal(kept.item.payee, 'Alice');
+  assert.equal(kept.item.memo, 'Quarterly');
+  const cleared = (await app.editTransaction(token, budget.id, income.id, { payee: null, memo: '  ' }, undefined, options('metadata-clear', 2))).data as any;
+  assert.equal(cleared.item.payee, null);
+  assert.equal(cleared.item.memo, null);
+  const listed = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?q=alice&kind=INCOME&from=2026-02-01&to=2026-02-01`);
+  assert.equal(listed.status, 200);
+  assert.equal((await listed.json() as any).data.items.length, 0);
+});
+
+test('history query grammar rejects repeated, unknown, inverted, and overlong parameters', async () => {
+  const { app, token, budget } = prepare();
+  for (const query of ['?q=one&q=two', '?unknown=value', '?from=2026-03-01&to=2026-02-01', `?q=${encodeURIComponent('😀'.repeat(201))}`]) {
+    const response = await http(app, token, `/api/v1/budgets/${budget.id}/transactions${query}`);
+    assert.equal(response.status, 400, query);
+    assert.equal((await response.json() as any).error.code, 'VALIDATION_ERROR');
+  }
+});
+
+test('metadata history covers spending and transfers with literal combined filters', async () => {
+  const { app, token, budget } = prepare();
+  const destination = (await app.createAccount(token, budget.id, { name: 'Search destination', kind: 'checking' }, undefined, options('metadata-api-account', 0))).data.account;
+  const spending = (await app.recordSpending(token, budget.id, { amountMinor: 20, categoryId: budget.categories[0].id, date: '2026-02-02', payee: 'Store', memo: '100%_ready' }, undefined, options('metadata-api-spending', 1))).data as any;
+  assert.deepEqual({ payee: spending.payee, memo: spending.memo }, { payee: 'Store', memo: '100%_ready' });
+  const transfer = (await app.recordTransfer(token, budget.id, { sourceAccountId: budget.account!.id, destinationAccountId: destination.id, amountMinor: 5, date: '2026-02-03', payee: 'Move', memo: 'Archive note' }, undefined, options('metadata-api-transfer', 2))).data as any;
+  assert.deepEqual({ payee: transfer.payee, memo: transfer.memo }, { payee: 'Move', memo: 'Archive note' });
+  const literal = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?q=${encodeURIComponent('100%_')}&kind=SPENDING&category=${budget.categories[0].id}&from=2026-02-02&to=2026-02-02`);
+  assert.equal((await literal.json() as any).data.items[0].memo, '100%_ready');
+  const transferResponse = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${destination.id}&kind=TRANSFER&q=destination`);
+  const transferItems = (await transferResponse.json() as any).data.items;
+  assert.equal(transferItems.length, 1);
+  assert.deepEqual({ payee: transferItems[0].payee, memo: transferItems[0].memo }, { payee: 'Move', memo: 'Archive note' });
+});

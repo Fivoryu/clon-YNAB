@@ -19,7 +19,7 @@ const cleanup = async (userId: string) => {
     await prisma.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma.account.findUnique({ where: { budgetId: user.budget.id } });
+    const account = await prisma.account.findFirst({ where: { budgetId: user.budget.id } });
     if (account) { await prisma.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma.account.delete({ where: { id: account.id } }); }
     await prisma.budget.delete({ where: { id: user.budget.id } });
   }

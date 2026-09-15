@@ -26,6 +26,8 @@ enum FinancialEventKind {
   ASSIGNMENT
   UNASSIGNMENT
   MOVE
+  TRANSFER_OUT
+  TRANSFER_IN
   TRANSACTION_DELETE
 }
 
@@ -63,10 +65,11 @@ model Budget {
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt
   owner      User               @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  account    Account?
+  accounts   Account[]
   categories Category[]
   months     BudgetMonth[]
   events     FinancialEvent[]
+  transfers  Transfer[]
   commands   CommandReceipt[]
   deletionAudits TransactionDeletionAudit[]
   @@index([timezone])
@@ -74,7 +77,7 @@ model Budget {
 
 model Account {
   id              String             @id @default(uuid()) @db.Uuid
-  budgetId        String             @unique @db.Uuid
+  budgetId        String             @db.Uuid
   name            String
   kind            AccountKind
   archived        Boolean            @default(false)
@@ -83,7 +86,10 @@ model Account {
   budget          Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
   openingBalances OpeningBalance[]
   events          FinancialEvent[]   @relation("AccountEvents")
-      @@unique([budgetId, id])
+  sourceTransfers Transfer[]         @relation("TransferSource")
+  destinationTransfers Transfer[]    @relation("TransferDestination")
+  @@unique([budgetId, id])
+  @@index([budgetId, createdAt, id])
 }
 
 model Category {
@@ -107,6 +113,7 @@ model OpeningBalance {
   amountMinor   BigInt
   recordedAt    DateTime @default(now())
   account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  @@unique([accountId])
   @@index([accountId, recordedAt])
 }
 
@@ -128,6 +135,7 @@ model FinancialEvent {
   destinationCategoryId String?        @db.Uuid
   relatedEventId    String?            @unique @db.Uuid
   transactionId     String?            @db.Uuid
+  transferId        String?            @db.Uuid
   supersedesEventId String?            @db.Uuid
   status            TransactionStatus?
   reconciled        Boolean            @default(false)
@@ -136,6 +144,8 @@ model FinancialEvent {
   businessDate      DateTime?          @db.Date
   month             String?
   createdAt         DateTime           @default(now())
+  payee             String?
+  memo              String?
   budget            Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
   account           Account?           @relation("AccountEvents", fields: [budgetId, accountId], references: [budgetId, id], onDelete: Restrict)
   category          Category?          @relation("CategoryEvents", fields: [budgetId, categoryId], references: [budgetId, id], onDelete: Restrict)
@@ -143,12 +153,40 @@ model FinancialEvent {
   destinationCategory Category?        @relation("DestinationCategoryEvents", fields: [budgetId, destinationCategoryId], references: [budgetId, id], onDelete: Restrict)
   relatedEvent      FinancialEvent?    @relation("ReleaseOf", fields: [budgetId, relatedEventId], references: [budgetId, id], onDelete: Restrict)
   release           FinancialEvent?    @relation("ReleaseOf")
+  transfer          Transfer?          @relation(fields: [budgetId, transferId], references: [budgetId, id], onDelete: Restrict)
   @@unique([budgetId, id])
   @@unique([budgetId, relatedEventId])
   @@index([budgetId, month, kind])
-  @@index([budgetId, transactionId, createdAt])
+  @@index([budgetId, transactionId, createdAt, id])
+  @@index([budgetId, businessDate, kind, createdAt])
+  @@index([budgetId, accountId, businessDate])
+  @@index([budgetId, categoryId, businessDate])
+  @@index([budgetId, transferId])
+  @@unique([budgetId, transferId, kind])
   @@index([accountId, createdAt])
   @@index([categoryId, month])
+}
+
+model Transfer {
+  id                   String           @id @default(uuid()) @db.Uuid
+  budgetId             String           @db.Uuid
+  sourceAccountId      String           @db.Uuid
+  destinationAccountId String           @db.Uuid
+  amountMinor          BigInt
+  businessDate         DateTime         @db.Date
+  month                String
+  createdAt            DateTime         @default(now())
+  payee                String?
+  memo                 String?
+  budget               Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  sourceAccount        Account          @relation("TransferSource", fields: [budgetId, sourceAccountId], references: [budgetId, id], onDelete: Restrict)
+  destinationAccount   Account          @relation("TransferDestination", fields: [budgetId, destinationAccountId], references: [budgetId, id], onDelete: Restrict)
+  events               FinancialEvent[]
+  @@unique([budgetId, id])
+  @@index([budgetId, businessDate, createdAt, id])
+  @@index([budgetId, month])
+  @@index([budgetId, sourceAccountId, businessDate])
+  @@index([budgetId, destinationAccountId, businessDate])
 }
 
 model TransactionDeletionAudit {

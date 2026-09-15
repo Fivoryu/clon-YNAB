@@ -1,4 +1,10 @@
 export type MinorUnits = number;
+export type AccountKind = 'CASH' | 'CHECKING';
+export type AccountState = { id: string; name: string; kind: AccountKind; archived: boolean; createdAt?: string; openingBalanceMinor: MinorUnits; balanceMinor?: MinorUnits };
+export type AccountBalanceEvent = { accountId?: string; kind: 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN'; amountMinor: MinorUnits };
+
+export const orderAccounts = <T extends { id: string; createdAt?: string }>(accounts: readonly T[]) => [...accounts].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id));
+export const oldestAccount = <T extends { id: string; createdAt?: string }>(accounts: readonly T[]) => orderAccounts(accounts)[0] ?? null;
 
 const integer = (value: number, name: string, min?: number) => {
   if (!Number.isSafeInteger(value) || (min !== undefined && value < min)) {
@@ -21,6 +27,22 @@ export const calculateAccountBalance = (input: { openingBalanceMinor: MinorUnits
   integer(input.spendingMinor, 'spendingMinor', 0);
   return input.openingBalanceMinor + input.incomeMinor - input.spendingMinor;
 };
+
+export const calculateAccountBalances = <T extends AccountState>(accounts: readonly T[], events: readonly AccountBalanceEvent[]) => {
+  const ordered = orderAccounts(accounts);
+  const fallback = oldestAccount(ordered)?.id;
+  return ordered.map(account => {
+    const balance = events.reduce((total, event) => {
+      if ((event.accountId ?? fallback) !== account.id) return total;
+      integer(event.amountMinor, 'event.amountMinor', 0);
+      return total + (event.kind === 'INCOME' || event.kind === 'TRANSFER_IN' ? event.amountMinor : -event.amountMinor);
+    }, account.openingBalanceMinor);
+    integer(balance, 'account balance');
+    return { ...account, balanceMinor: balance };
+  });
+};
+
+export const aggregateAccountBalance = (accounts: readonly AccountState[], events: readonly AccountBalanceEvent[]) => calculateAccountBalances(accounts, events).reduce((sum, account) => sum + account.balanceMinor!, 0);
 export type RtaBreakdown = RtaInput & { amountMinor: MinorUnits };
 
 export const calculateRta = (input: RtaInput): RtaBreakdown => {

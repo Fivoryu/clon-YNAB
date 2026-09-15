@@ -3,12 +3,12 @@ info:
   title: YNAB first-slice API
   version: 1.0.0
   description: >-
-    The implemented first slice supports cash and checking accounts, categories,
-    realized income, explicit income release, categorized spending, assignments,
-    unassignments, moves, monthly summaries, and dashboard values. Transfers,
-    splits, cards, reconciliation, targets, scheduled transactions, future income,
-    refunds, reimbursements, returns, and cleared/pending/uncleared states remain unsupported
-    and are not part of this contract. Transaction history correction is limited to the routes below.
+    The bounded slice supports cash and checking accounts, account lifecycle,
+    same-budget transfers, categories, realized income, explicit income release,
+    categorized spending, assignments, unassignments, moves, monthly summaries,
+    dashboard values, and transaction history. Splits, cards, reconciliation, targets,
+    scheduled transactions, future income, refunds, reimbursements, returns, and
+    cleared/pending/uncleared states remain unsupported and are not part of this contract.
 servers:
   - url: /
 paths:
@@ -71,6 +71,42 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/accounts:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    post:
+      summary: Create a manual account after setup
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AccountInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/AccountSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/accounts/{accountId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    patch:
+      summary: Rename an account
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NameInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/AccountSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/accounts/{accountId}/archive:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    post:
+      summary: Archive an account; unarchive is not supported
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: false, content: { application/json: { schema: { type: object, maxProperties: 0 } } } }
+      responses:
+        '200': { $ref: '#/components/responses/AccountSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/categories:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
     post:
@@ -138,12 +174,24 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/transfers:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    post:
+      summary: Record a same-budget account transfer
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransferInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/TransferSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/transactions:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
     get:
       summary: List effective transaction history
       security: [{ cookieAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/MonthOptional' }]
+      parameters: [{ $ref: '#/components/parameters/MonthOptional' }, { $ref: '#/components/parameters/HistoryAccount' }, { $ref: '#/components/parameters/HistoryKind' }, { $ref: '#/components/parameters/HistoryCategory' }, { $ref: '#/components/parameters/HistoryFrom' }, { $ref: '#/components/parameters/HistoryTo' }, { $ref: '#/components/parameters/HistoryQuery' }]
       responses:
         '200': { $ref: '#/components/responses/TransactionListSuccess' }
         '400': { $ref: '#/components/responses/ValidationError' }
@@ -255,6 +303,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { type: string }
     CategoryId:
       name: categoryId
       in: path
@@ -280,8 +333,14 @@ components:
       name: month
       in: query
       required: false
-      description: Optional history filter in YYYY-MM format.
+      description: Optional history filter in YYYY-MM format; repeated or unknown query keys are rejected.
       schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+    HistoryAccount: { name: account, in: query, required: false, description: Canonical server-owned account UUID; transfers match either side., schema: { type: string, format: uuid } }
+    HistoryKind: { name: kind, in: query, required: false, schema: { type: string, enum: [INCOME, SPENDING, TRANSFER] } }
+    HistoryCategory: { name: category, in: query, required: false, description: Canonical server-owned category UUID., schema: { type: string, format: uuid } }
+    HistoryFrom: { name: from, in: query, required: false, description: Inclusive YYYY-MM-DD lower bound., schema: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }
+    HistoryTo: { name: to, in: query, required: false, description: Inclusive YYYY-MM-DD upper bound., schema: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }
+    HistoryQuery: { name: q, in: query, required: false, description: Literal case-insensitive substring over metadata and current server names; maximum 200 Unicode code points., schema: { type: string, maxLength: 200 } }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -292,13 +351,21 @@ components:
       name: If-Match
       in: header
       required: false
-      description: Optional expected version for optimistic concurrency; stale expected versions return 409. Weak or quoted integer ETags are accepted.
+      description: Optional expected version for legacy-compatible commands; stale expected versions return 409. Weak or quoted integer ETags are accepted.
       schema: { type: string }
+    RequiredIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Required expected budget version for account and transfer commands. Weak or quoted integer ETags are accepted.
+      schema: { type: string, pattern: '^(W/)?"?[0-9]+"?$' }
   responses:
     UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
     SessionSuccess: { description: Authenticated session; also sets the sid cookie, headers: { Set-Cookie: { description: Session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SessionEnvelope' } } } }
     EmptySuccess: { description: Session revoked and cookie cleared, headers: { Set-Cookie: { description: Cleared session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/EmptyEnvelope' } } } }
     BudgetSuccess: { description: Budget state, content: { application/json: { schema: { $ref: '#/components/schemas/BudgetEnvelope' } } } }
+    AccountSuccess: { description: Account mutation result, content: { application/json: { schema: { $ref: '#/components/schemas/AccountEnvelope' } } } }
+    TransferSuccess: { description: Transfer result, content: { application/json: { schema: { $ref: '#/components/schemas/TransferEnvelope' } } } }
     FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
     TransactionListSuccess: { description: Effective transaction history, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionListEnvelope' } } } }
     TransactionSuccess: { description: Effective transaction result, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionEnvelope' } } } }
@@ -308,6 +375,7 @@ components:
     Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     Conflict: { description: State or concurrency conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    InternalError: { description: Unexpected internal failure, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
   schemas:
     SuccessEnvelope:
       type: object
@@ -323,42 +391,52 @@ components:
           type: object
           required: [code, message, requestId]
           properties:
-            code: { type: string, enum: [UNAUTHENTICATED, NOT_FOUND, CONFLICT, VALIDATION_ERROR] }
+            code: { type: string, enum: [UNAUTHENTICATED, NOT_FOUND, CONFLICT, VALIDATION_ERROR, INTERNAL_ERROR] }
             message: { type: string }
             requestId: { type: string, minLength: 1, description: Non-empty request ID }
     User: { type: object, required: [id, email], properties: { id: { type: string }, email: { type: string, format: email } } }
     Session: { type: object, required: [user, sessionToken], properties: { user: { $ref: '#/components/schemas/User' }, sessionToken: { type: string, description: Opaque session token returned for this first slice } } }
-    Account: { type: object, required: [id, name, openingBalanceMinor], properties: { id: { type: string }, name: { type: string }, openingBalanceMinor: { type: integer } } }
+    Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer } } }
+    AccountInput: { type: object, required: [name, kind], additionalProperties: false, properties: { name: { type: string, minLength: 1 }, kind: { type: string, enum: [cash, checking] }, openingBalanceMinor: { type: integer } } }
     Category: { type: object, required: [id, name, archived], properties: { id: { type: string }, name: { type: string }, archived: { type: boolean } } }
-    Budget: { type: object, required: [id, setupStep, timezone, version, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
+    Budget: { type: object, required: [id, setupStep, timezone, version, accounts, accountBalanceMinor, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, accounts: { type: array, items: { $ref: '#/components/schemas/Account' } }, accountBalanceMinor: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
     Rta: { type: object, required: [amountMinor, openingBalanceMinor, releasedIncomeMinor, unreleasedIncomeMinor, priorCarryMinor, assignedMinor], properties: { amountMinor: { type: integer }, openingBalanceMinor: { type: integer }, releasedIncomeMinor: { type: integer }, unreleasedIncomeMinor: { type: integer }, priorCarryMinor: { type: integer }, assignedMinor: { type: integer } } }
     CategorySummary: { allOf: [{ $ref: '#/components/schemas/Category' }], type: object, properties: { carryoverMinor: { type: integer }, assignedMinor: { type: integer }, activityMinor: { type: integer }, availableMinor: { type: integer } } }
-    FinancialSummary: { type: object, required: [month, accountBalanceMinor, rta, categories, version], properties: { month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, accountBalanceMinor: { type: integer }, rta: { $ref: '#/components/schemas/Rta' }, categories: { type: array, items: { $ref: '#/components/schemas/CategorySummary' } }, version: { type: integer } } }
+    FinancialSummary: { type: object, required: [month, accountBalanceMinor, accounts, rta, categories, version], properties: { month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, accountBalanceMinor: { type: integer }, accounts: { type: array, items: { $ref: '#/components/schemas/Account' } }, rta: { $ref: '#/components/schemas/Rta' }, categories: { type: array, items: { $ref: '#/components/schemas/CategorySummary' } }, version: { type: integer } } }
     RegisterInput: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string, minLength: 8 } } }
     SignInInput: { $ref: '#/components/schemas/RegisterInput' }
     SetupInput: { type: object, properties: { openingBalanceMinor: { type: integer }, accountName: { type: string }, accountType: { type: string, enum: [cash, checking] }, categories: { type: array, items: { type: string } } } }
     NameInput: { type: object, required: [name], properties: { name: { type: string } } }
     Money: { type: integer, minimum: 1, description: Positive integer minor-unit amount. }
-    IncomeInput: { type: object, required: [amountMinor], properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string } } }
-    SpendingInput: { type: object, required: [amountMinor, categoryId], properties: { amountMinor: { $ref: '#/components/schemas/Money' }, categoryId: { type: string }, date: { type: string } } }
+    Payee: { type: string, maxLength: 200, description: Trimmed Unicode text; null clears the value., nullable: true }
+    Memo: { type: string, maxLength: 1000, description: Trimmed Unicode text; null clears the value., nullable: true }
+    IncomeInput: { type: object, required: [amountMinor], additionalProperties: false, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' } } }
+    SpendingInput: { type: object, required: [amountMinor, categoryId], additionalProperties: false, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, categoryId: { type: string }, accountId: { type: string }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' } } }
+    TransferInput: { type: object, required: [sourceAccountId, destinationAccountId, amountMinor, date], additionalProperties: false, properties: { sourceAccountId: { type: string }, destinationAccountId: { type: string }, amountMinor: { type: integer, minimum: 1 }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$', format: date }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' } } }
     AllocationInput: { type: object, required: [categoryId, amountMinor, month], properties: { categoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
     MoveInput: { type: object, required: [sourceCategoryId, destinationCategoryId, amountMinor, month], properties: { sourceCategoryId: { type: string }, destinationCategoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
-    TransactionEditInput: { type: object, minProperties: 1, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, categoryId: { type: string } } }
+    TransactionEditInput: { type: object, minProperties: 1, additionalProperties: false, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, categoryId: { type: string }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' } } }
     TransactionDeleteInput: { type: object, required: [confirmed], properties: { confirmed: { type: boolean, enum: [true] }, reason: { type: string } } }
-    TransactionHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, state], properties: { transactionId: { type: string }, kind: { type: string, enum: [INCOME, SPENDING] }, date: { type: string, format: date }, amountMinor: { type: integer }, accountId: { type: string }, category: { nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }] }, createdAt: { type: string }, state: { type: string, enum: [ELIGIBLE, PROTECTED] } } }
-    TransactionListResult: { type: object, required: [items, version], properties: { items: { type: array, items: { $ref: '#/components/schemas/TransactionHistoryItem' } }, version: { type: integer } } }
-    TransactionResult: { type: object, required: [item, version], properties: { item: { $ref: '#/components/schemas/TransactionHistoryItem' }, version: { type: integer } } }
+    TransactionHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, payee, memo, state], properties: { transactionId: { type: string }, kind: { type: string, enum: [INCOME, SPENDING] }, date: { type: string, format: date }, amountMinor: { type: integer }, accountId: { type: string }, category: { nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }] }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string }, state: { type: string, enum: [ELIGIBLE, PROTECTED] } } }
+    TransferHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, sourceAccount, destinationAccount, payee, memo, createdAt], properties: { transactionId: { type: string }, kind: { type: string, enum: [TRANSFER] }, date: { type: string, format: date }, amountMinor: { type: integer, minimum: 1 }, sourceAccount: { $ref: '#/components/schemas/AccountReference' }, destinationAccount: { $ref: '#/components/schemas/AccountReference' }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string, format: date-time } } }
+    AccountReference: { type: object, required: [id, name, kind, archived], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean } } }
+    TransactionListResult: { type: object, required: [items, version], properties: { items: { type: array, items: { oneOf: [{ $ref: '#/components/schemas/TransactionHistoryItem' }, { $ref: '#/components/schemas/TransferHistoryItem' }] } }, version: { type: integer } } }
+    TransactionResult: { type: object, required: [item, version], properties: { item: { oneOf: [{ $ref: '#/components/schemas/TransactionHistoryItem' }, { $ref: '#/components/schemas/TransferHistoryItem' }] }, version: { type: integer } } }
     DeleteResult: { type: object, required: [id, deleted, version], properties: { id: { type: string }, deleted: { type: boolean, enum: [true] }, version: { type: integer } } }
-    IncomeResult: { type: object, required: [id, amountMinor, released, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, released: { type: boolean }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
+    IncomeResult: { type: object, required: [id, amountMinor, payee, memo, released, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, released: { type: boolean }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
     ReleaseResult: { type: object, required: [incomeId, releasedNowMinor, released, version], properties: { incomeId: { type: string }, releasedNowMinor: { type: integer }, released: { type: boolean }, version: { type: integer } } }
-    SpendingResult: { type: object, required: [id, amountMinor, categoryId, month, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, categoryId: { type: string }, month: { type: string }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
+    SpendingResult: { type: object, required: [id, amountMinor, categoryId, month, payee, memo, accountBalanceMinor, version], properties: { id: { type: string }, amountMinor: { type: integer }, categoryId: { type: string }, month: { type: string }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
+    AccountResult: { type: object, required: [account, version], properties: { account: { $ref: '#/components/schemas/Account' }, version: { type: integer } } }
+    TransferResult: { type: object, required: [transferId, sourceAccountId, destinationAccountId, amountMinor, date, payee, memo, sourceAccount, destinationAccount, accountBalanceMinor, version], properties: { transferId: { type: string }, sourceAccountId: { type: string }, destinationAccountId: { type: string }, amountMinor: { type: integer, minimum: 1 }, date: { type: string, format: date }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, sourceAccount: { $ref: '#/components/schemas/Account' }, destinationAccount: { $ref: '#/components/schemas/Account' }, accountBalanceMinor: { type: integer }, version: { type: integer } } }
     AllocationResult: { type: object, required: [id, categoryId, amountMinor, rtaMinor, assignedMinor, version], properties: { id: { type: string }, categoryId: { type: string }, amountMinor: { type: integer }, rtaMinor: { type: integer }, assignedMinor: { type: integer }, previousRtaMinor: { type: integer }, version: { type: integer } } }
     MoveResult: { type: object, required: [id, source, destination, amountMinor, version], properties: { id: { type: string }, source: { type: object, properties: { assignedMinor: { type: integer } } }, destination: { type: object, properties: { assignedMinor: { type: integer } } }, amountMinor: { type: integer }, version: { type: integer } } }
-    FinancialResult: { oneOf: [{ $ref: '#/components/schemas/IncomeResult' }, { $ref: '#/components/schemas/ReleaseResult' }, { $ref: '#/components/schemas/SpendingResult' }, { $ref: '#/components/schemas/AllocationResult' }, { $ref: '#/components/schemas/MoveResult' }] }
+    FinancialResult: { oneOf: [{ $ref: '#/components/schemas/IncomeResult' }, { $ref: '#/components/schemas/ReleaseResult' }, { $ref: '#/components/schemas/SpendingResult' }, { $ref: '#/components/schemas/AllocationResult' }, { $ref: '#/components/schemas/MoveResult' }, { $ref: '#/components/schemas/TransferResult' }] }
     UserEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/User' } } }
     SessionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Session' } } }
     EmptyEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { nullable: true } } }
     BudgetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Budget' } } }
+    AccountEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/AccountResult' } } }
+    TransferEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransferResult' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }
     TransactionListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionListResult' } } }
     TransactionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionResult' } } }
