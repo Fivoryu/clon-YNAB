@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { applyAssignment, calculateAccountBalances, moveAssignment, monthForDate, oldestAccount, releaseIncome, unassign, type AccountState } from './planning/engine.ts';
 import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, filterHistoryItems, normalizeMetadata, normalizeMetadataPatch, parseTransactionDate, type HistoryFilter } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
+import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
 import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
@@ -16,6 +17,7 @@ export type PublicAccount = { id: string; name: string; kind: 'CASH' | 'CHECKING
     export type AccountPatch = { name?: unknown };
 export type SetupInput = { openingBalanceMinor?: number; accountName?: string; accountType?: string; categories?: string[] };
 export type CommandOptions = { idempotencyKey?: string; expectedVersion?: number };
+export type CsvImportResult = { rows: number; accepted: number; rejected: number; diagnostics: CsvDiagnostic[]; diagnosticsTruncated: boolean; version: number };
 export type TransactionEditInput = { amountMinor?: unknown; date?: unknown; categoryId?: unknown; payee?: unknown; memo?: unknown };
 export type TransactionDeleteInput = { confirmed?: unknown; reason?: unknown };
 export type AccountReference = Pick<PublicAccount, 'id' | 'name' | 'kind' | 'archived'>;
@@ -24,10 +26,11 @@ export type TransactionHistoryItem = { transactionId: string; kind: 'INCOME' | '
 export type { FinancialSummary };
 
 export class ApiError extends Error {
-  readonly code: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION_ERROR';
+  readonly code: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION_ERROR' | 'UNSUPPORTED_MEDIA_TYPE' | 'INTERNAL_ERROR';
   readonly status: number;
-  constructor(code: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION_ERROR', message: string, status = code === 'NOT_FOUND' ? 404 : code === 'CONFLICT' ? 409 : code === 'VALIDATION_ERROR' ? 400 : 401) {
-    super(message); this.code = code; this.status = status;
+  readonly details?: unknown;
+  constructor(code: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION_ERROR' | 'UNSUPPORTED_MEDIA_TYPE' | 'INTERNAL_ERROR', message: string, status = code === 'NOT_FOUND' ? 404 : code === 'CONFLICT' ? 409 : code === 'VALIDATION_ERROR' ? 400 : code === 'UNSUPPORTED_MEDIA_TYPE' ? 415 : code === 'INTERNAL_ERROR' ? 500 : 401, details?: unknown) {
+    super(message); this.code = code; this.status = status; this.details = details;
   }
 }
 
@@ -222,6 +225,70 @@ export class BudgetApp {
       const id = randomUUID(); events.push({ id, kind: 'MOVE', amountMinor: value, sourceCategoryId: input.sourceCategoryId, destinationCategoryId: input.destinationCategoryId, month: monthValue }); return { id, ...moveAssignment({ assignedMinor: source.assignedMinor }, { assignedMinor: state.categories.find(c => c.id === input.destinationCategoryId)!.assignedMinor }, value), version };
     });
   }
+  async exportTransactionsCsv(token: string, budgetId: string) {
+    const user = await this.authenticate(token);
+    await this.requireBudget(token, budgetId);
+    try {
+      const state = await this.financialStore.load(user.id, budgetId);
+      return serializeTransactionCsv(projectEffectiveCsvRows(state.rawEvents ?? state.events, state.transfers ?? []));
+    } catch (error) {
+      if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
+  }
+
+  async importTransactionsCsv(token: string, budgetId: string, bytes: Uint8Array, requestId?: string, options: CommandOptions = {}) {
+    await this.authenticate(token);
+    await this.requireBudget(token, budgetId);
+    const parsed = parseTransactionCsv(bytes);
+    if (parsed.diagnostics.length || parsed.rejected > 0 || parsed.rows === 0) {
+      const details = { rows: parsed.rows, accepted: parsed.accepted, rejected: parsed.rejected, diagnostics: parsed.diagnostics, diagnosticsTruncated: parsed.diagnosticsTruncated };
+      throw new ApiError('VALIDATION_ERROR', 'CSV validation failed', 400, details);
+    }
+    if (!Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
+    const payloadDigest = canonicalImportDigest(budgetId, options.expectedVersion!, parsed.values);
+    return this.financial(token, budgetId, 'csv-import', { rows: parsed.values }, requestId, options, (budget, events, version, append = () => {}) => {
+      this.ready(budget);
+      const accounts = budget.accounts ?? (budget.account ? [{ ...budget.account, kind: budget.account.kind ?? 'CASH', archived: budget.account.archived ?? false }] : []);
+      const categories = budget.categories;
+      const resourceDiagnostics: CsvDiagnostic[] = [];
+      let resourceRejected = 0;
+      for (let index = 0; index < parsed.values.length; index += 1) {
+        const row = parsed.values[index];
+        const accountIds = row.type === 'TRANSFER' ? row.account.split('=>') : [row.account];
+        const unavailableAccount = accountIds.some(id => !accounts.some(account => account.id.toLowerCase() === id && !account.archived));
+        const unavailableCategory = row.type === 'SPENDING' && !categories.some(category => category.id.toLowerCase() === row.category && !category.archived);
+        if (unavailableAccount || unavailableCategory) {
+          resourceRejected += 1;
+          if (resourceDiagnostics.length < 1_000) resourceDiagnostics.push({ row: index + 2, field: unavailableAccount ? 'account' : 'category', code: 'RESOURCE_UNAVAILABLE', message: 'Referenced resource is unavailable' });
+        }
+      }
+      if (resourceRejected) {
+        throw new ApiError('VALIDATION_ERROR', 'CSV validation failed', 400, { rows: parsed.rows, accepted: parsed.rows - resourceRejected, rejected: resourceRejected, diagnostics: resourceDiagnostics, diagnosticsTruncated: resourceRejected > resourceDiagnostics.length });
+      }
+
+      const createdAtBase = this.now();
+      for (let index = 0; index < parsed.values.length; index += 1) {
+        const row = parsed.values[index];
+        const createdAt = new Date(createdAtBase + index).toISOString();
+        const parsedDate = parseTransactionDate(row.date, budget.timezone);
+        if (row.type === 'TRANSFER') {
+          const [sourceAccountId, destinationAccountId] = row.account.split('=>');
+          const transferId = randomUUID();
+          budget.transfers = [...(budget.transfers ?? []), { id: transferId, sourceAccountId, destinationAccountId, amountMinor: row.amountMinor, businessDate: row.date, month: parsedDate.month, createdAt, payee: row.payee, memo: row.memo }];
+          const out: FinancialEvent = { id: randomUUID(), kind: 'TRANSFER_OUT', amountMinor: row.amountMinor, accountId: sourceAccountId, transferId, businessDate: row.date, month: parsedDate.month, createdAt };
+          const incoming: FinancialEvent = { id: randomUUID(), kind: 'TRANSFER_IN', amountMinor: row.amountMinor, accountId: destinationAccountId, transferId, businessDate: row.date, month: parsedDate.month, createdAt };
+          events.push(out, incoming); append(out); append(incoming);
+        } else {
+          const id = randomUUID();
+          const event: FinancialEvent = { id, transactionId: id, kind: row.type, amountMinor: row.amountMinor, accountId: row.account, businessDate: row.date, month: parsedDate.month, ...(row.type === 'SPENDING' ? { categoryId: row.category } : {}), status: 'POSTED', reconciled: false, createdAt, payee: row.payee, memo: row.memo };
+          events.push(event); append(event);
+        }
+      }
+      return { rows: parsed.rows, accepted: parsed.rows, rejected: 0, diagnostics: [], diagnosticsTruncated: false, version } satisfies CsvImportResult;
+    }, undefined, true, false, payloadDigest);
+  }
+
   async listTransactions(token: string, budgetId: string, requestedFilter?: string | HistoryFilter, requestId?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
         const filter: HistoryFilter = typeof requestedFilter === 'string' ? { month: month(requestedFilter) } : (requestedFilter ?? {});
@@ -270,10 +337,10 @@ export class BudgetApp {
   async getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
   async getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
 
-  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false, persistAccounts = false) {
+  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false, persistAccounts = false, payloadDigest?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); if (requireVersion && !Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
     try {
-      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(audit ? { deletionAudit: audit(user.id) } : {}), ...(persistAccounts ? { persistAccounts: true } : {}) });
+      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(audit ? { deletionAudit: audit(user.id) } : {}), ...(persistAccounts ? { persistAccounts: true } : {}), ...(payloadDigest ? { payloadDigest } : {}) });
       return ok(stored.result, requestId);
     } catch (error) {
       if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
@@ -312,4 +379,4 @@ export class BudgetApp {
   private verify(password: string, encoded: string) { const [salt, expected] = encoded.split(':'); const actual = scryptSync(password, Buffer.from(salt, 'hex'), 32); return timingSafeEqual(actual, Buffer.from(expected, 'hex')); }
 }
 
-export const errorEnvelope = (error: unknown, requestId = randomUUID()) => { const e = error instanceof ApiError ? error : new ApiError('VALIDATION_ERROR', 'Request failed', 400); return { status: e.status, body: { error: { code: e.code, message: e.message, requestId } } }; };
+export const errorEnvelope = (error: unknown, requestId = randomUUID()) => { const e = error instanceof ApiError ? error : new ApiError('INTERNAL_ERROR', 'Internal server error', 500); return { status: e.status, body: { error: { code: e.code, message: e.message, requestId, ...(e.details !== undefined ? { details: e.details } : {}) } } }; };

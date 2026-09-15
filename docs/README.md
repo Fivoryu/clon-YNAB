@@ -4,9 +4,9 @@ This directory contains the product research and technical decisions for the aca
 
 ## Current phase
 
-**Phase 1 — Group 3 implementation-readiness decisions recorded.** This remains a documentation-only phase: no application code has started, and SDD/OpenSpec has not started.
+**Implementation active — bounded MVP/later-slice capabilities are present in the repository.** The original research and Phase 1 documents are retained as historical product decisions, while OpenSpec changes now trace the implemented budgeting slice, transaction-history edit/delete, multi-account transfers, transaction metadata/search, and manual CSV import/export.
 
-The goal of this phase is to record the approved implementation-readiness decisions, preserve unresolved questions explicitly, and maintain a deliberately small MVP boundary before implementation begins.
+The application code lives under `apps/api` and `apps/web`. The root `README.md` is the current setup and verification entry point.
 
 ## Priority and delivery status
 
@@ -26,9 +26,9 @@ Priority and delivery status are separate dimensions. **P0**, **P1**, and **P2**
 10. [ADR-001: modular monolith](decisions/ADR-001-modular-monolith.md)
 11. [ADR-002: financial history](decisions/ADR-002-financial-history.md)
 
-## Implementation entry gate
+## Historical implementation entry gate
 
-**Clone decision:** No implementation may begin until the Group 3 decisions in these documents are traced to concrete acceptance criteria. After this documentation update and its read-only verification checks, the next phase is bounded SDD/OpenSpec for the first vertical slice. This entry gate does not authorize implementation or start SDD/OpenSpec by itself.
+**Historical Clone decision:** Before the first slice was implemented, no implementation could begin until the Group 3 decisions in these documents are traced to concrete acceptance criteria. After this documentation update and its read-only verification checks, the next phase is bounded SDD/OpenSpec for the first vertical slice. This entry gate does not authorize implementation or start SDD/OpenSpec by itself.
 
 ## Evidence policy
 
@@ -43,4 +43,4 @@ This project must not present the clone as the official YNAB product. It should 
 
 ## OpenSpec boundary
 
-OpenSpec will be used later to describe and validate concrete product or technical changes. During this research phase, these stable documents are the source of context. We are intentionally not starting an SDD change yet.
+OpenSpec is now used for concrete product and technical changes under `openspec/changes`. These research documents remain context and decision history; current implementation status is recorded in each change task/progress artifact and in the root `README.md`.

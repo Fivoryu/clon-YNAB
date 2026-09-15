@@ -31,3 +31,15 @@ test('history workflow stays at the browser API boundary', () => {
   assert.match(page, /Confirm delete/);
   assert.match(page, /crypto\.randomUUID\(\)/);
 });
+
+test('CSV workflow stays server-authoritative and exposes bounded manual import/export controls', () => {
+  assert.match(page, /transactions\/export/);
+  assert.match(page, /transactions\/import/);
+  assert.match(page, /text\/csv; charset=utf-8/);
+  assert.match(page, /10_485_760/);
+  assert.match(page, /Download CSV/);
+  assert.match(page, /Import CSV/);
+  assert.match(page, /CSV diagnostics/);
+  assert.match(page, /await refresh\(\)/);
+  assert.doesNotMatch(page, /calculateAccountBalance|calculateRta|parseTransactionCsv/);
+});

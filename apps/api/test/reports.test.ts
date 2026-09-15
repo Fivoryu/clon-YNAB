@@ -1,14 +1,13 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { BudgetApp, ApiError } from '../src/app.ts';
 import { FinancialStore } from '../src/persistence/financial-store.ts';
 import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
 import { ReportService } from '../src/reports/report-service.ts';
 
 const password = 'correct horse';
-const prisma = new PrismaClient();
+const prisma = process.env.DATABASE_URL ? new (await import('@prisma/client')).PrismaClient() : null;
 const options = (idempotencyKey: string, expectedVersion?: number) => ({ idempotencyKey, expectedVersion });
 
 const prepare = () => {
@@ -21,21 +20,21 @@ const prepare = () => {
   return { app, token, budget: complete };
 };
 
-const durableApp = () => new BudgetApp(Date.now, new PrismaBudgetStore(prisma), new FinancialStore(prisma));
+const durableApp = () => new BudgetApp(Date.now, new PrismaBudgetStore(prisma!), new FinancialStore(prisma!));
 const cleanup = async (email: string) => {
-  const user = await prisma.user.findUnique({ where: { email }, include: { budget: true } });
+  const user = await prisma!.user.findUnique({ where: { email }, include: { budget: true } });
   if (user?.budget) {
-    await prisma.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma.account.findFirst({ where: { budgetId: user.budget.id } });
+    await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
+    const account = await prisma!.account.findFirst({ where: { budgetId: user.budget.id } });
     if (account) {
-      await prisma.openingBalance.deleteMany({ where: { accountId: account.id } });
-      await prisma.account.delete({ where: { id: account.id } });
+      await prisma!.openingBalance.deleteMany({ where: { accountId: account.id } });
+      await prisma!.account.delete({ where: { id: account.id } });
     }
-    await prisma.budget.delete({ where: { id: user.budget.id } });
+    await prisma!.budget.delete({ where: { id: user.budget.id } });
   }
-  if (user) await prisma.user.delete({ where: { id: user.id } });
+  if (user) await prisma!.user.delete({ where: { id: user.id } });
 };
 
 test('dashboard and month summary expose equivalent canonical values', async () => {
@@ -106,7 +105,7 @@ test('foreign report access remains NOT_FOUND', async () => {
   assert.equal(app.getBudget(token, budget.id).data.version, 0);
 });
 
-test('a new Prisma-backed BudgetApp rebuilds the same report values after restart', async () => {
+test('a new Prisma-backed BudgetApp rebuilds the same report values after restart', { skip: !process.env.DATABASE_URL }, async () => {
   const email = `reports-restart-${randomUUID()}@example.test`;
   try {
     const first = durableApp();
@@ -128,4 +127,4 @@ test('a new Prisma-backed BudgetApp rebuilds the same report values after restar
   }
 });
 
-after(async () => prisma.$disconnect());
+after(async () => { if (prisma) await prisma.$disconnect(); });

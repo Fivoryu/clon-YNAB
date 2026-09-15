@@ -6,7 +6,7 @@ info:
     The bounded slice supports cash and checking accounts, account lifecycle,
     same-budget transfers, categories, realized income, explicit income release,
     categorized spending, assignments, unassignments, moves, monthly summaries,
-    dashboard values, and transaction history. Splits, cards, reconciliation, targets,
+    dashboard values, transaction history, and manual CSV import/export. Splits, cards, reconciliation, targets,
     scheduled transactions, future income, refunds, reimbursements, returns, and
     cleared/pending/uncleared states remain unsupported and are not part of this contract.
 servers:
@@ -186,6 +186,41 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/transactions/export:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    get:
+      summary: Export effective supported transaction history as canonical CSV
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Canonical UTF-8 RFC 4180 CSV with CRLF record endings.
+          headers:
+            Content-Disposition: { description: Deterministic download filename., schema: { type: string } }
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/transactions/import:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    post:
+      summary: Atomically import supported transactions from canonical CSV
+      description: Synchronous all-or-nothing import. Maximum 10 MiB, 5000 data rows, and 1000 returned diagnostics. The exact header is date,type,account,amountMinor,category,payee,memo. Transfers encode account as sourceAccountId=>destinationAccountId.
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string, format: binary }
+      responses:
+        '201': { $ref: '#/components/responses/CsvImportSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/budgets/{budgetId}/transactions:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
     get:
@@ -358,7 +393,7 @@ components:
       in: header
       required: true
       description: Required expected budget version for account and transfer commands. Weak or quoted integer ETags are accepted.
-      schema: { type: string, pattern: '^(W/)?"?[0-9]+"?$' }
+      schema: { type: string, pattern: '^(?:[0-9]+|"[0-9]+"|W/"[0-9]+")$' }
   responses:
     UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
     SessionSuccess: { description: Authenticated session; also sets the sid cookie, headers: { Set-Cookie: { description: Session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SessionEnvelope' } } } }
@@ -375,6 +410,8 @@ components:
     Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     Conflict: { description: State or concurrency conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    CsvImportSuccess: { description: CSV import committed atomically, content: { application/json: { schema: { $ref: '#/components/schemas/CsvImportEnvelope' } } } }
+    UnsupportedMediaType: { description: CSV import requires text/csv with optional charset=utf-8, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     InternalError: { description: Unexpected internal failure, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
   schemas:
     SuccessEnvelope:
@@ -391,9 +428,14 @@ components:
           type: object
           required: [code, message, requestId]
           properties:
-            code: { type: string, enum: [UNAUTHENTICATED, NOT_FOUND, CONFLICT, VALIDATION_ERROR, INTERNAL_ERROR] }
+            code: { type: string, enum: [UNAUTHENTICATED, NOT_FOUND, CONFLICT, VALIDATION_ERROR, UNSUPPORTED_MEDIA_TYPE, INTERNAL_ERROR] }
+            details: { $ref: '#/components/schemas/CsvImportDetails' }
             message: { type: string }
             requestId: { type: string, minLength: 1, description: Non-empty request ID }
+    CsvDiagnostic: { type: object, required: [row, field, code, message], properties: { row: { type: integer, minimum: 0 }, field: { type: string }, code: { type: string }, message: { type: string } } }
+    CsvImportDetails: { type: object, required: [rows, accepted, rejected, diagnostics, diagnosticsTruncated], properties: { rows: { type: integer, minimum: 0 }, accepted: { type: integer, minimum: 0 }, rejected: { type: integer, minimum: 0 }, diagnostics: { type: array, maxItems: 1000, items: { $ref: '#/components/schemas/CsvDiagnostic' } }, diagnosticsTruncated: { type: boolean } } }
+    CsvImportResult: { allOf: [{ $ref: '#/components/schemas/CsvImportDetails' }], type: object, required: [version], properties: { version: { type: integer, minimum: 0 } } }
+    CsvImportEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/CsvImportResult' } } }
     User: { type: object, required: [id, email], properties: { id: { type: string }, email: { type: string, format: email } } }
     Session: { type: object, required: [user, sessionToken], properties: { user: { $ref: '#/components/schemas/User' }, sessionToken: { type: string, description: Opaque session token returned for this first slice } } }
     Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer } } }

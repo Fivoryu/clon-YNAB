@@ -4,6 +4,8 @@
 
 Deliver a small, understandable budgeting product that demonstrates the YNAB-style planning loop without pretending to reproduce the entire commercial service.
 
+> **Implementation status note (2026-09):** this document preserves the original first-slice and later-slice scope decisions. The repository has since delivered additional bounded slices for transaction edit/delete, multiple accounts/transfers, payee/memo plus history search, and manual CSV import/export. Treat “later slice” wording below as historical planning context, not necessarily as current implementation status.
+
 Priority and delivery status are separate: **P0**, **P1**, and **P2** express importance; delivery status is **first slice**, **later MVP slice**, or **deferred/out of MVP**. A P0 later-MVP item is not part of the bounded first slice.
 
 ## In scope

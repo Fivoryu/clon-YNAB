@@ -1,32 +1,31 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { BudgetApp, ApiError } from '../src/app.ts';
 import { FinancialStore } from '../src/persistence/financial-store.ts';
 import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
 
-const prisma = new PrismaClient();
+const prisma = process.env.DATABASE_URL ? new (await import('@prisma/client')).PrismaClient() : null;
 const password = 'correct horse';
 
 const durableApp = () => {
-  const store = new PrismaBudgetStore(prisma);
-  return new BudgetApp(Date.now, store, new FinancialStore(prisma));
+  const store = new PrismaBudgetStore(prisma!);
+  return new BudgetApp(Date.now, store, new FinancialStore(prisma!));
 };
 const cleanup = async (userId: string) => {
-  const user = await prisma.user.findUnique({ where: { id: userId }, include: { budget: true } });
+  const user = await prisma!.user.findUnique({ where: { id: userId }, include: { budget: true } });
   if (user?.budget) {
-    await prisma.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma.account.findFirst({ where: { budgetId: user.budget.id } });
-    if (account) { await prisma.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma.account.delete({ where: { id: account.id } }); }
-    await prisma.budget.delete({ where: { id: user.budget.id } });
+    await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
+    const account = await prisma!.account.findFirst({ where: { budgetId: user.budget.id } });
+    if (account) { await prisma!.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma!.account.delete({ where: { id: account.id } }); }
+    await prisma!.budget.delete({ where: { id: user.budget.id } });
   }
-  await prisma.user.delete({ where: { id: userId } });
+  await prisma!.user.delete({ where: { id: userId } });
 };
 
-test('identity, session, budget, and resumable setup survive a new app instance', async () => {
+test('identity, session, budget, and resumable setup survive a new app instance', { skip: !process.env.DATABASE_URL }, async () => {
   const email = `restart-${randomUUID()}@example.test`;
   const first = durableApp();
   const registered = await first.register(email, password);
@@ -47,7 +46,7 @@ test('identity, session, budget, and resumable setup survive a new app instance'
   await cleanup(registered.data.id);
 });
 
-test('financial events, replay, and payload conflicts survive an app restart', async () => {
+test('financial events, replay, and payload conflicts survive an app restart', { skip: !process.env.DATABASE_URL }, async () => {
   const email = `financial-restart-${randomUUID()}@example.test`;
   const first = durableApp();
   await first.register(email, password);
@@ -67,11 +66,11 @@ test('financial events, replay, and payload conflicts survive an app restart', a
     (error: unknown) => error instanceof ApiError && error.code === 'CONFLICT',
   );
   assert.equal(complete.setupStep, 'COMPLETE');
-  const user = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
+  const user = await prisma!.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
   await cleanup(user.id);
 });
 
-test('database uniqueness enforces one budget per user across app instances', async () => {
+test('database uniqueness enforces one budget per user across app instances', { skip: !process.env.DATABASE_URL }, async () => {
   const email = `one-budget-${randomUUID()}@example.test`;
   const first = durableApp();
   await first.register(email, password);
@@ -79,8 +78,8 @@ test('database uniqueness enforces one budget per user across app instances', as
   await first.createBudget(token);
   const restarted = durableApp();
   await assert.rejects(() => restarted.createBudget(token), (error: unknown) => error instanceof ApiError && error.code === 'CONFLICT');
-  const user = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
+  const user = await prisma!.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
   await cleanup(user.id);
 });
 
-after(async () => prisma.$disconnect());
+after(async () => { if (prisma) await prisma.$disconnect(); });

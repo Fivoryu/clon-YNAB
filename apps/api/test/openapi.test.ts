@@ -92,3 +92,24 @@ test('OpenAPI documents the bounded multi-account and transfer contract', () => 
   assert.match(document, /InternalError/);
   assert.doesNotMatch(document, /\/api\/v1\/budgets\/\{budgetId\}\/\/(?:imports|cards|splits|reconciliation)/i);
 });
+
+test('OpenAPI documents the manual CSV import/export contract and limits', () => {
+  const exportBlock = operationBlock('/api/v1/budgets/{budgetId}/transactions/export', 'get');
+  assert.match(exportBlock, /text\/csv/);
+  assert.match(exportBlock, /Content-Disposition/);
+  assert.match(exportBlock, /cookieAuth/);
+  assert.match(exportBlock, /InternalError/);
+
+  const importBlock = operationBlock('/api/v1/budgets/{budgetId}/transactions/import', 'post');
+  for (const value of ['text/csv', 'IdempotencyKey', 'RequiredIfMatch', 'CsvImportSuccess', 'ValidationError', 'Unauthenticated', 'NotFound', 'Conflict', 'UnsupportedMediaType', 'InternalError']) assert.match(importBlock, new RegExp(value.replace('/', '\\/')));
+  assert.match(importBlock, /10 MiB/);
+  assert.match(importBlock, /5000 data rows/);
+  assert.match(importBlock, /1000 returned diagnostics/);
+  assert.match(importBlock, /date,type,account,amountMinor,category,payee,memo/);
+  assert.match(importBlock, /sourceAccountId=>destinationAccountId/);
+  assert.match(document, /CsvDiagnostic:/);
+  assert.match(document, /CsvImportDetails:/);
+  assert.match(document, /CsvImportResult:/);
+  assert.match(document, /UNSUPPORTED_MEDIA_TYPE/);
+  assert.match(document, /pattern: '\^\(\?:\[0-9\]\+\|"\[0-9\]\+"\|W\/"\[0-9\]\+"\)\$'/);
+});

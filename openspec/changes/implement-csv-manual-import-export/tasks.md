@@ -38,24 +38,24 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### RED
 
-- [ ] Add failing tests for exact header, strict UTF-8/no BOM, CRLF/final terminator, RFC 4180 commas/quotes/embedded CRLF, seven-field records, blank-row handling, malformed quotes, limits, and bounded row-numbered diagnostics using `cd apps/api && npm test -- --runInBand <csv-domain-test-file>`. <!-- sdd-owner: implementation -->
-- [ ] Add failing tests for exact date/leap validation, positive safe minor units, supported types, account/category rules, `sourceAccountId=>destinationAccountId`, archived/foreign/unavailable diagnostics, metadata normalization/code-point boundaries, and no category for income/transfer. <!-- sdd-owner: implementation -->
-- [ ] Add failing round-trip/digest tests for canonical CRLF serialization, null metadata, deterministic ordering, effective-history filtering, one transfer row, paired-effect exclusion, normalized digest input, reordered-row distinction, and duplicate-looking rows remaining distinct. <!-- sdd-owner: implementation -->
+- [x] Add failing tests for exact header, strict UTF-8/no BOM, CRLF/final terminator, RFC 4180 commas/quotes/embedded CRLF, seven-field records, blank-row handling, malformed quotes, limits, and bounded row-numbered diagnostics using `cd apps/api && npm test -- --runInBand <csv-domain-test-file>`. <!-- sdd-owner: implementation -->
+- [x] Add failing tests for exact date/leap validation, positive safe minor units, supported types, account/category rules, `sourceAccountId=>destinationAccountId`, archived/foreign/unavailable diagnostics, metadata normalization/code-point boundaries, and no category for income/transfer. <!-- sdd-owner: implementation -->
+- [x] Add failing round-trip/digest tests for canonical CRLF serialization, null metadata, deterministic ordering, effective-history filtering, one transfer row, paired-effect exclusion, normalized digest input, reordered-row distinction, and duplicate-looking rows remaining distinct. <!-- sdd-owner: implementation -->
 
 ### GREEN
 
-- [ ] Implement the focused strict byte parser and canonical serializer with the fixed seven-column grammar, 10 MiB/5,000-row/1,000-diagnostic limits, safe diagnostics, and no general dialect expansion. <!-- sdd-owner: implementation -->
-- [ ] Implement row normalization/validation and SHA-256 canonical digest, reusing approved metadata normalizer semantics and canonical `accounts[]`/transfer references without performing persistence. <!-- sdd-owner: implementation -->
-- [ ] Implement effective-history export projection and UTF-8-byte deterministic ordering: date ascending, type `INCOME < SPENDING < TRANSFER`, account cell, amount, category, nullable payee/memo, then durable identity; emit transfers once. <!-- sdd-owner: implementation -->
+- [x] Implement the focused strict byte parser and canonical serializer with the fixed seven-column grammar, 10 MiB/5,000-row/1,000-diagnostic limits, safe diagnostics, and no general dialect expansion. <!-- sdd-owner: implementation -->
+- [x] Implement row normalization/validation and SHA-256 canonical digest, reusing approved metadata normalizer semantics and canonical `accounts[]`/transfer references without performing persistence. <!-- sdd-owner: implementation -->
+- [x] Implement effective-history export projection and UTF-8-byte deterministic ordering: date ascending, type `INCOME < SPENDING < TRANSFER`, account cell, amount, category, nullable payee/memo, then durable identity; emit transfers once. <!-- sdd-owner: implementation -->
 
 ### TRIANGULATE
 
-- [ ] Run `cd apps/api && npm test -- --runInBand <csv-domain-test-file>` and record parser boundary, serializer byte, metadata, transfer grammar, digest, and effective-projection evidence. <!-- sdd-owner: implementation -->
-- [ ] Compare pure in-memory fixtures with the approved history/transfer projection and prove category `MOVE` is never classified as `TRANSFER`; record `N/A` for PostgreSQL durability in this unit. <!-- sdd-owner: implementation -->
+- [x] Run `cd apps/api && npm test -- --runInBand <csv-domain-test-file>` and record parser boundary, serializer byte, metadata, transfer grammar, digest, and effective-projection evidence. <!-- sdd-owner: implementation -->
+- [x] Compare pure in-memory fixtures with the approved history/transfer projection and prove category `MOVE` is never classified as `TRANSFER`; record `N/A` for PostgreSQL durability in this unit. <!-- sdd-owner: implementation -->
 
 ### REFACTOR
 
-- [ ] Consolidate grammar, normalization, diagnostics, digest, and ordering ownership into one reusable domain seam; keep all limits and non-goals explicit and rerun the focused command. <!-- sdd-owner: implementation -->
+- [x] Consolidate grammar, normalization, diagnostics, digest, and ordering ownership into one reusable domain seam; keep all limits and non-goals explicit and rerun the focused command. <!-- sdd-owner: implementation -->
 
 ## Review Unit 2 — Durable PostgreSQL batch and projection
 
@@ -65,15 +65,15 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### RED
 
-- [ ] Add failing PostgreSQL tests for all-file validation before writes, one receipt/version per batch, transfer aggregate plus exactly two effects, active same-budget resolution, archived rejection, and no implicit account/category creation. <!-- sdd-owner: implementation -->
-- [ ] Add failing tests for injected failure rollback, database constraint/tenant isolation, restart/rebuild equality, effective-history filtering, deterministic export, transfer conservation, and report neutrality for Activity, Assigned, Available, and RTA. <!-- sdd-owner: implementation -->
-- [ ] Add failing concurrency tests for budget-lock serialization, stale `If-Match`, same-key retries, changed digest conflict, response-loss replay, and concurrent attempts producing no duplicate identities/effects. <!-- sdd-owner: implementation -->
+- [x] Add failing PostgreSQL tests for all-file validation before writes, one receipt/version per batch, transfer aggregate plus exactly two effects, active same-budget resolution, archived rejection, and no implicit account/category creation. <!-- sdd-owner: implementation -->
+- [x] Add failing tests for injected failure rollback, database constraint/tenant isolation, restart/rebuild equality, effective-history filtering, deterministic export, transfer conservation, and report neutrality for Activity, Assigned, Available, and RTA. <!-- sdd-owner: implementation -->
+- [x] Add failing concurrency tests for budget-lock serialization, stale `If-Match`, same-key retries, changed digest conflict, response-loss replay, and concurrent attempts producing no duplicate identities/effects. <!-- sdd-owner: implementation -->
 
 ### GREEN
 
-- [ ] Add only the approved additive nullable metadata/transfer persistence support in `apps/api/prisma/schema.prisma` and `apps/api/prisma/migrations/<additive-csv-metadata-migration>/migration.sql`; preserve legacy IDs, openings, raw history, composite tenant ownership, and compatibility alias semantics. <!-- sdd-owner: implementation -->
-- [ ] Implement one PostgreSQL transaction in `apps/api/src/persistence/financial-store.ts`: lock budget first, check receipt/digest, compare version, resolve all resources under the lock, append every row, persist metadata and transfer aggregate/effects, insert receipt, increment version once, and commit or roll back all state. <!-- sdd-owner: implementation -->
-- [ ] Implement durable effective export from folded history and transfer aggregates, excluding tombstones/superseded/raw/receipt rows and paired effects; keep in-memory parity in `apps/api/src/persistence/in-memory-budget-store.ts` as test evidence only. <!-- sdd-owner: implementation -->
+- [x] Add only the approved additive nullable metadata/transfer persistence support in `apps/api/prisma/schema.prisma` and `apps/api/prisma/migrations/<additive-csv-metadata-migration>/migration.sql`; preserve legacy IDs, openings, raw history, composite tenant ownership, and compatibility alias semantics. <!-- sdd-owner: implementation -->
+- [x] Implement one PostgreSQL transaction in `apps/api/src/persistence/financial-store.ts`: lock budget first, check receipt/digest, compare version, resolve all resources under the lock, append every row, persist metadata and transfer aggregate/effects, insert receipt, increment version once, and commit or roll back all state. <!-- sdd-owner: implementation -->
+- [x] Implement durable effective export from folded history and transfer aggregates, excluding tombstones/superseded/raw/receipt rows and paired effects; keep in-memory parity in `apps/api/src/persistence/in-memory-budget-store.ts` as test evidence only. <!-- sdd-owner: implementation -->
 
 ### TRIANGULATE
 
@@ -92,24 +92,24 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### RED
 
-- [ ] Add failing HTTP tests for cookie auth/non-disclosure ordering, exact routes, CSV content type/charset, 10 MiB bounded body handling, strict headers, status/envelopes, request IDs, and direct CSV export bytes. <!-- sdd-owner: implementation -->
-- [ ] Add failing API tests for validation diagnostics, 401/404/409/415/500 mapping, idempotent replay/digest conflict, stale/concurrent `If-Match`, owner-scoped resource resolution, and unchanged existing JSON behavior. <!-- sdd-owner: implementation -->
-- [ ] Add failing OpenAPI structural tests for both routes, media types, limits, headers, result/diagnostic schemas, transfer grammar, and retained existing route matrix. <!-- sdd-owner: implementation -->
+- [x] Add failing HTTP tests for cookie auth/non-disclosure ordering, exact routes, CSV content type/charset, 10 MiB bounded body handling, strict headers, status/envelopes, request IDs, and direct CSV export bytes. <!-- sdd-owner: implementation -->
+- [x] Add failing API tests for validation diagnostics, 401/404/409/415/500 mapping, idempotent replay/digest conflict, stale/concurrent `If-Match`, owner-scoped resource resolution, and unchanged existing JSON behavior. <!-- sdd-owner: implementation -->
+- [x] Add failing OpenAPI structural tests for both routes, media types, limits, headers, result/diagnostic schemas, transfer grammar, and retained existing route matrix. <!-- sdd-owner: implementation -->
 
 ### GREEN
 
-- [ ] Wire bounded raw-byte parsing and authenticated owner-scoped orchestration in `apps/api/src/server.ts` and `apps/api/src/app.ts`; return `201` JSON `{ data, requestId }` on import and direct `200 text/csv; charset=utf-8` export with deterministic attachment metadata. <!-- sdd-owner: implementation -->
-- [ ] Enforce required `Idempotency-Key`/`If-Match`, safe errors, no raw CSV/SQL/foreign-resource disclosure, and exact request flow before detailed account/category diagnostics. <!-- sdd-owner: implementation -->
-- [ ] Update `apps/api/openapi.yaml` and contract tests for additive CSV behavior, explicitly excluding unsupported formats, identities, resources, and non-goals. <!-- sdd-owner: implementation -->
+- [x] Wire bounded raw-byte parsing and authenticated owner-scoped orchestration in `apps/api/src/server.ts` and `apps/api/src/app.ts`; return `201` JSON `{ data, requestId }` on import and direct `200 text/csv; charset=utf-8` export with deterministic attachment metadata. <!-- sdd-owner: implementation -->
+- [x] Enforce required `Idempotency-Key`/`If-Match`, safe errors, no raw CSV/SQL/foreign-resource disclosure, and exact request flow before detailed account/category diagnostics. <!-- sdd-owner: implementation -->
+- [x] Update `apps/api/openapi.yaml` and contract tests for additive CSV behavior, explicitly excluding unsupported formats, identities, resources, and non-goals. <!-- sdd-owner: implementation -->
 
 ### TRIANGULATE
 
-- [ ] Run `cd apps/api && npm test -- --runInBand <csv-api-test-files> <csv-openapi-test-file>` and exercise observed HTTP export/import requests for malformed, valid, replay, changed-key, stale-version, and inaccessible-budget cases. <!-- sdd-owner: implementation -->
-- [ ] Confirm OpenAPI/runtime parity and that export does not create receipts or advance version while one successful import advances it exactly once. <!-- sdd-owner: implementation -->
+- [x] Run `cd apps/api && npm test -- --runInBand <csv-api-test-files> <csv-openapi-test-file>` and exercise observed HTTP export/import requests for malformed, valid, replay, changed-key, stale-version, and inaccessible-budget cases. <!-- sdd-owner: implementation -->
+- [x] Confirm OpenAPI/runtime parity and that export does not create receipts or advance version while one successful import advances it exactly once. <!-- sdd-owner: implementation -->
 
 ### REFACTOR
 
-- [ ] Centralize route/header/error handling on existing conventions, preserve legacy JSON envelopes and authorization, and rerun focused API/contract commands. <!-- sdd-owner: implementation -->
+- [x] Centralize route/header/error handling on existing conventions, preserve legacy JSON envelopes and authorization, and rerun focused API/contract commands. <!-- sdd-owner: implementation -->
 
 ## Review Unit 4 — Web and regression
 
@@ -119,22 +119,22 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### RED
 
-- [ ] Add failing web/API regression coverage for download, file selection, 10 MiB rejection, bounded diagnostics, successful refresh, stale-version handling, and unchanged first-slice JSON/history/report behavior. <!-- sdd-owner: implementation -->
-- [ ] Add failing E2E coverage for income, spending, and one transfer export/import round trip, metadata nullability, one transfer history item, account/category semantics, and no client-calculated balances or RTA. <!-- sdd-owner: implementation -->
+- [x] Add failing web/API regression coverage for download, file selection, 10 MiB rejection, bounded diagnostics, successful refresh, stale-version handling, and unchanged first-slice JSON/history/report behavior. <!-- sdd-owner: implementation -->
+- [x] Add failing E2E coverage for income, spending, and one transfer export/import round trip, metadata nullability, one transfer history item, account/category semantics, and no client-calculated balances or RTA. <!-- sdd-owner: implementation -->
 
 ### GREEN
 
-- [ ] Update `apps/web/app/page.tsx` with manual synchronous export/download and import selection/upload, display safe counts/diagnostics, send server version/idempotency headers, and refresh authoritative projections after success; do not add local financial calculations or mapping. <!-- sdd-owner: implementation -->
-- [ ] Preserve transfer direction, `accounts[]` with oldest `account` compatibility, metadata rendering, archived-history readability, and all explicit non-goals in the client. <!-- sdd-owner: implementation -->
+- [x] Update `apps/web/app/page.tsx` with manual synchronous export/download and import selection/upload, display safe counts/diagnostics, send server version/idempotency headers, and refresh authoritative projections after success; do not add local financial calculations or mapping. <!-- sdd-owner: implementation -->
+- [x] Preserve transfer direction, `accounts[]` with oldest `account` compatibility, metadata rendering, archived-history readability, and all explicit non-goals in the client. <!-- sdd-owner: implementation -->
 
 ### TRIANGULATE
 
 - [ ] Run the focused web command, established Playwright/E2E command, and `cd apps/api && npm test -- --runInBand <existing-regression-files>`; verify PostgreSQL-backed results after reload/restart and report neutrality. <!-- sdd-owner: implementation -->
-- [ ] Record export/import round-trip bytes, rollback/no-partial-state evidence, concurrency/idempotency evidence from Unit 2, and exact changed-line counts for this unit. <!-- sdd-owner: implementation -->
+- [x] Record export/import round-trip bytes, rollback/no-partial-state evidence, concurrency/idempotency evidence from Unit 2, and exact changed-line counts for this unit. <!-- sdd-owner: implementation -->
 
 ### REFACTOR
 
-- [ ] Remove duplicated client authority/filtering, align loading/error/accessibility behavior with existing UI conventions, rerun focused regressions, and confirm cards/splits/reconciliation/banking/background jobs remain absent. <!-- sdd-owner: implementation -->
+- [x] Remove duplicated client authority/filtering, align loading/error/accessibility behavior with existing UI conventions, rerun focused regressions, and confirm cards/splits/reconciliation/banking/background jobs remain absent. <!-- sdd-owner: implementation -->
 
 ## Parent Gate Before Apply
 

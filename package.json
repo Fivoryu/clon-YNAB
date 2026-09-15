@@ -12,7 +12,10 @@
     "typecheck:web": "tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --jsx preserve --lib ES2022,DOM --skipLibCheck apps/web/app/page.tsx apps/web/app/layout.tsx",
     "db:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
     "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
-    "db:status": "prisma migrate status --schema apps/api/prisma/schema.prisma"
+    "db:status": "prisma migrate status --schema apps/api/prisma/schema.prisma",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "test:csv": "node --experimental-strip-types --test apps/api/test/csv-domain.test.ts apps/api/test/csv-api.test.ts apps/api/test/csv-http.test.ts apps/api/test/csv-postgres.test.ts apps/api/test/openapi.test.ts apps/web/test/page.test.ts",
+    "verify": "npm test && npm run typecheck:web && npm run build:web"
   },
   "engines": {
     "node": ">=22"

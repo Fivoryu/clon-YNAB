@@ -1,4 +1,4 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 import type { FinancialState } from './financial-store.ts';
 import { withPostgresTransaction } from './transaction.ts';
 import { calculateAccountBalances, oldestAccount } from '../planning/engine.ts';
@@ -16,7 +16,7 @@ export interface BudgetStore {
 }
 export class PrismaBudgetStore implements BudgetStore {
   private readonly client: PrismaClient;
-  constructor(client: PrismaClient = new PrismaClient()) { this.client = client; }
+  constructor(client?: PrismaClient) { if (!client) throw new Error('PrismaBudgetStore requires a PrismaClient'); this.client = client; }
   async createUser(user: NewUser) { try { await this.client.user.create({ data: user }); } catch (error: any) { if (error?.code === 'P2002') throw new BudgetStoreError('CONFLICT', 'Account already exists'); throw error; } }
   async findUser(email: string) { return this.toUser(await this.client.user.findUnique({ where: { email }, include: { budget: { select: { id: true } } } })); }
   async findUserById(id: string) { return this.toUser(await this.client.user.findUnique({ where: { id }, include: { budget: { select: { id: true } } } })); }

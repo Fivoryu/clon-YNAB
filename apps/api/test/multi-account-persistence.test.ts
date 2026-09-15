@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { PrismaClient } from '@prisma/client';
 import { BudgetApp, ApiError } from '../src/app.ts';
 import { createServer } from '../src/server.ts';
 import { FinancialStore } from '../src/persistence/financial-store.ts';
@@ -116,6 +115,7 @@ test('postgres projection durability suite requires an explicit PostgreSQL datab
 });
 
 test('postgres account lifecycle commits atomically and rebuilds after restart', { skip: !process.env.DATABASE_URL }, async () => {
+  const { PrismaClient } = await import('@prisma/client');
   const firstPrisma = new PrismaClient();
   const secondPrisma = new PrismaClient();
   const email = `lifecycle-db-${randomUUID()}@example.test`;
@@ -221,6 +221,7 @@ test('transfer HTTP route enforces command headers and exposes aggregate history
 
 
 test('postgres transfer commits atomically, survives restart, and serializes retries', { skip: !process.env.DATABASE_URL }, async () => {
+  const { PrismaClient } = await import('@prisma/client');
   const prisma = new PrismaClient(); const restartPrisma = new PrismaClient();
   const email = `transfer-db-${randomUUID()}@example.test`; let budgetId = '';
   const cleanup = async () => {

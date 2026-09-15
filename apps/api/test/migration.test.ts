@@ -2,14 +2,13 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { BudgetApp } from '../src/app.ts';
 import { FinancialStore } from '../src/persistence/financial-store.ts';
 import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
 
-const prisma = new PrismaClient();
-const expectedMigrations = ['0001_budgeting_slice', '0002_ownership_consistency'];
-const requiredTables = ['User', 'Session', 'Budget', 'Account', 'Category', 'OpeningBalance', 'BudgetMonth', 'FinancialEvent', 'CommandReceipt'];
+const prisma = process.env.DATABASE_URL ? new (await import('@prisma/client')).PrismaClient() : null;
+const expectedMigrations = ['0001_budgeting_slice', '0002_ownership_consistency', '0003_transaction_history', '0004_multi_account_projection', '0005_transaction_metadata'];
+const requiredTables = ['User', 'Session', 'Budget', 'Account', 'Category', 'OpeningBalance', 'BudgetMonth', 'FinancialEvent', 'Transfer', 'TransactionDeletionAudit', 'CommandReceipt'];
 const compositeConstraints = [
   ['FinancialEvent_budget_account_fkey', ['budgetId', 'accountId']],
   ['FinancialEvent_budget_category_fkey', ['budgetId', 'categoryId']],
@@ -18,22 +17,22 @@ const compositeConstraints = [
   ['FinancialEvent_budget_related_event_fkey', ['budgetId', 'relatedEventId']],
 ] as const;
 
-const durableApp = () => new BudgetApp(Date.now, new PrismaBudgetStore(prisma), new FinancialStore(prisma));
+const durableApp = () => new BudgetApp(Date.now, new PrismaBudgetStore(prisma!), new FinancialStore(prisma!));
 
 const cleanup = async (userId: string) => {
-  const user = await prisma.user.findUnique({ where: { id: userId }, include: { budget: true } });
+  const user = await prisma!.user.findUnique({ where: { id: userId }, include: { budget: true } });
   if (user?.budget) {
-    await prisma.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma.account.findFirst({ where: { budgetId: user.budget.id } });
+    await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
+    const account = await prisma!.account.findFirst({ where: { budgetId: user.budget.id } });
     if (account) {
-      await prisma.openingBalance.deleteMany({ where: { accountId: account.id } });
-      await prisma.account.delete({ where: { id: account.id } });
+      await prisma!.openingBalance.deleteMany({ where: { accountId: account.id } });
+      await prisma!.account.delete({ where: { id: account.id } });
     }
-    await prisma.budget.delete({ where: { id: user.budget.id } });
+    await prisma!.budget.delete({ where: { id: user.budget.id } });
   }
-  await prisma.user.delete({ where: { id: userId } });
+  await prisma!.user.delete({ where: { id: userId } });
 };
 
 test('database status command is reproducible', async () => {
@@ -41,25 +40,25 @@ test('database status command is reproducible', async () => {
   assert.equal(packageJson.scripts?.['db:status'], 'prisma migrate status --schema apps/api/prisma/schema.prisma');
 });
 
-test('local migrations, ownership constraints, and event rebuild are verified', async () => {
-  const migrations = await prisma.$queryRaw<Array<{ migration_name: string; finished_at: Date | null; rolled_back_at: Date | null }>>`
+test('local migrations, ownership constraints, and event rebuild are verified', { skip: !process.env.DATABASE_URL }, async () => {
+  const migrations = await prisma!.$queryRaw<Array<{ migration_name: string; finished_at: Date | null; rolled_back_at: Date | null }>>`
     SELECT migration_name, finished_at, rolled_back_at
     FROM "_prisma_migrations"
-    WHERE migration_name IN ('0001_budgeting_slice', '0002_ownership_consistency')
+    WHERE migration_name IN ('0001_budgeting_slice', '0002_ownership_consistency', '0003_transaction_history', '0004_multi_account_projection', '0005_transaction_metadata')
     ORDER BY migration_name
   `;
   assert.deepEqual(migrations.map(row => row.migration_name), expectedMigrations);
   assert.ok(migrations.every(row => row.finished_at !== null && row.rolled_back_at === null), 'expected migrations must be applied and not rolled back');
 
-  const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`
+  const tables = await prisma!.$queryRaw<Array<{ table_name: string }>>`
     SELECT table_name
     FROM information_schema.tables
     WHERE table_schema = 'public'
-      AND table_name IN ('User', 'Session', 'Budget', 'Account', 'Category', 'OpeningBalance', 'BudgetMonth', 'FinancialEvent', 'CommandReceipt')
+      AND table_name IN ('User', 'Session', 'Budget', 'Account', 'Category', 'OpeningBalance', 'BudgetMonth', 'FinancialEvent', 'Transfer', 'TransactionDeletionAudit', 'CommandReceipt')
   `;
   assert.deepEqual(tables.map(row => row.table_name).sort(), [...requiredTables].sort());
 
-  const constraints = await prisma.$queryRaw<Array<{ conname: string; definition: string }>>`
+  const constraints = await prisma!.$queryRaw<Array<{ conname: string; definition: string }>>`
     SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
     FROM pg_constraint c
     JOIN pg_class t ON t.oid = c.conrelid
@@ -86,7 +85,7 @@ test('local migrations, ownership constraints, and event rebuild are verified', 
     await app.recordIncome(token, budget.id, { amountMinor: 500, date: '2026-02-01' }, undefined, { idempotencyKey: `${fixture}-income` });
     await app.recordSpending(token, budget.id, { amountMinor: 125, categoryId, date: '2026-02-01' }, undefined, { idempotencyKey: `${fixture}-spending` });
 
-    const events = await prisma.financialEvent.findMany({
+    const events = await prisma!.financialEvent.findMany({
       where: { budgetId: budget.id },
       orderBy: { createdAt: 'asc' },
       select: { kind: true, amountMinor: true, month: true, categoryId: true },
@@ -108,4 +107,4 @@ test('local migrations, ownership constraints, and event rebuild are verified', 
   }
 });
 
-after(async () => prisma.$disconnect());
+after(async () => { if (prisma) await prisma.$disconnect(); });

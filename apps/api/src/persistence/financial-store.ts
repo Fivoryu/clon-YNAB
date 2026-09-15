@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 import { withPostgresTransaction } from './transaction.ts';
 import { foldEffectiveHistory } from '../planning/transaction-history.ts';
 import { calculateAccountBalances, oldestAccount, type AccountState } from '../planning/engine.ts';
@@ -49,7 +49,7 @@ export type FinancialState = {
 };
 type Work<T> = (state: FinancialState, events: FinancialEvent[], nextVersion: number, append: (event: FinancialEvent) => void) => T;
 export type FinancialCommand<T> = {
-  ownerId: string; budgetId: string; command: string; input: unknown; idempotencyKey: string; expectedVersion?: number; work: Work<T>; persistAccounts?: boolean;
+  ownerId: string; budgetId: string; command: string; input: unknown; idempotencyKey: string; expectedVersion?: number; payloadDigest?: string; work: Work<T>; persistAccounts?: boolean;
   deletionAudit?: { actorId: string; transactionId: string; requestId?: string; reason?: string };
 };
 
@@ -86,10 +86,10 @@ export const mapTransferRow = (transfer: any): TransferState => ({
 
 export class FinancialStore {
   private readonly client: PrismaClient;
-  constructor(client: PrismaClient = new PrismaClient()) { this.client = client; }
+  constructor(client?: PrismaClient) { if (!client) throw new Error('FinancialStore requires a PrismaClient'); this.client = client; }
 
   async execute<T>(command: FinancialCommand<T>): Promise<{ result: T; version: number }> {
-    const payloadDigest = digest({ command: command.command, input: command.input, expectedVersion: command.expectedVersion });
+    const payloadDigest = command.payloadDigest ?? digest({ command: command.command, input: command.input, expectedVersion: command.expectedVersion });
     return withPostgresTransaction<Prisma.TransactionClient, { result: T; version: number }>(this.client, async tx => {
       let budget = await tx.budget.findFirst({ where: { id: command.budgetId, ownerId: command.ownerId }, include: { accounts: { include: { openingBalances: { orderBy: { recordedAt: 'desc' }, take: 1 } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, categories: true } });
       if (!budget) throw new PersistenceError('NOT_FOUND', 'Resource not found');

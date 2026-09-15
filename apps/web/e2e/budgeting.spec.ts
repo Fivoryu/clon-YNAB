@@ -184,3 +184,52 @@ test('integrates account lifecycle and transfers from server projections', async
       await expect(page.getByLabel('Payee')).toHaveCount(3);
       await expect(page.getByLabel('Memo')).toHaveCount(3);
 });
+
+test('imports and exports canonical CSV without client-side financial authority', async ({ page }) => {
+  const email = `csv-e2e-${randomUUID()}@example.com`;
+  const password = 'playwright-password';
+  const request = page.request;
+  const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
+    const response = await request.post(path, { data: body, headers });
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ data: any }>;
+  };
+  await post('/api/v1/auth/register', { email, password });
+  await post('/api/v1/auth/sign-in', { email, password });
+  const created = await post('/api/v1/budgets', {});
+  const budgetId = created.data.id;
+  await request.put(`/api/v1/budgets/${budgetId}`, { data: { openingBalanceMinor: 1000, accountName: 'Checking', categories: ['Food'] } });
+  const first = (await (await request.get(`/api/v1/budgets/${budgetId}`)).json() as any).data;
+  const secondResponse = await request.post(`/api/v1/budgets/${budgetId}/accounts`, { data: { name: 'Savings', kind: 'checking', openingBalanceMinor: 500 }, headers: { 'Idempotency-Key': randomUUID(), 'If-Match': `W/"${first.version}"` } });
+  expect(secondResponse.ok()).toBeTruthy();
+  const second = (await secondResponse.json() as any).data.account;
+  const current = (await (await request.get(`/api/v1/budgets/${budgetId}`)).json() as any).data;
+  const account = current.account.id;
+  const category = current.categories[0].id;
+  const csv = `date,type,account,amountMinor,category,payee,memo\r\n2026-09-13,TRANSFER,${account}=>${second.id},100,,Move,\r\n2026-09-14,SPENDING,${account},125,${category},Market,Food\r\n2026-09-15,INCOME,${account},300,,Employer,Pay\r\n`;
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  const csvRegion = page.getByRole('region', { name: 'CSV import and export' });
+  await csvRegion.getByLabel('CSV file').setInputFiles({ name: 'transactions.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await csvRegion.getByRole('button', { name: 'Import CSV' }).click();
+  await expect(page.getByRole('status')).toHaveText('Imported 3 CSV rows.');
+  await page.getByRole('button', { name: 'Load history' }).click();
+  const history = page.getByRole('list', { name: 'Transaction history' });
+  await expect(history.getByRole('listitem')).toHaveCount(3);
+  await expect(history).toContainText('Transfer');
+  await expect(history).toContainText('Market');
+
+  const downloadPromise = page.waitForEvent('download');
+  await csvRegion.getByRole('button', { name: 'Download CSV' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('transactions.csv');
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const exported = Buffer.concat(chunks).toString('utf8');
+  expect(exported).toContain('date,type,account,amountMinor,category,payee,memo\r\n');
+  expect(exported).toContain(`2026-09-13,TRANSFER,${account}=>${second.id},100,,Move,\r\n`);
+  expect(exported).toContain(`2026-09-14,SPENDING,${account},125,${category},Market,Food\r\n`);
+  expect(exported).toContain(`2026-09-15,INCOME,${account},300,,Employer,Pay\r\n`);
+});

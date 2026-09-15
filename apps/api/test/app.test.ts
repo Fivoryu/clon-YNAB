@@ -2,7 +2,7 @@ import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { BudgetApp, ApiError } from '../src/app.ts';
-import { server } from '../src/server.ts';
+import { createServer } from '../src/server.ts';
 
 const setup = { openingBalanceMinor: 12500, categories: ['Bills', 'Food'] };
 
@@ -42,6 +42,7 @@ test('setup is resumable, idempotent by state, and completes deterministically',
 });
 
 test('HTTP budget resume requires auth and resumes the authenticated budget', async (t) => {
+  const server = createServer(new BudgetApp());
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);

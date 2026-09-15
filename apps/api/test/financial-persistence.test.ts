@@ -1,30 +1,30 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { BudgetApp, ApiError } from '../src/app.ts';
 import { FinancialStore } from '../src/persistence/financial-store.ts';
 import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
 import { InMemoryBudgetStore } from '../src/persistence/in-memory-budget-store.ts';
 
-const prisma = new PrismaClient();
+const prisma = process.env.DATABASE_URL ? new (await import('@prisma/client')).PrismaClient() : null;
+const postgresEnabled = Boolean(process.env.DATABASE_URL);
 const options = (idempotencyKey: string, expectedVersion?: number) => ({ idempotencyKey, expectedVersion });
 const cleanup = async (email: string) => {
-  const user = await prisma.user.findUnique({ where: { email }, include: { budget: true } });
+  const user = await prisma!.user.findUnique({ where: { email }, include: { budget: true } });
   if (user?.budget) {
-    await prisma.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
-    await prisma.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma.account.findFirst({ where: { budgetId: user.budget.id } });
-    if (account) { await prisma.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma.account.delete({ where: { id: account.id } }); }
-    await prisma.budget.delete({ where: { id: user.budget.id } });
+    await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
+    const account = await prisma!.account.findFirst({ where: { budgetId: user.budget.id } });
+    if (account) { await prisma!.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma!.account.delete({ where: { id: account.id } }); }
+    await prisma!.budget.delete({ where: { id: user.budget.id } });
   }
-  if (user) await prisma.user.delete({ where: { id: user.id } });
+  if (user) await prisma!.user.delete({ where: { id: user.id } });
 };
 
-test('financial commands use PostgreSQL for durable reload, idempotency, versions, and rollback', async () => {
-  const store = new FinancialStore(prisma);
-  const app = new BudgetApp(Date.now, new PrismaBudgetStore(prisma), store);
+test('financial commands use PostgreSQL for durable reload, idempotency, versions, and rollback', { skip: !postgresEnabled }, async () => {
+  const store = new FinancialStore(prisma!);
+  const app = new BudgetApp(Date.now, new PrismaBudgetStore(prisma!), store);
   const email = `${randomUUID()}@example.test`;
   const registered = await app.register(email, 'correct horse');
   const token = (await app.signIn(email, 'correct horse')).data.sessionToken;
@@ -64,15 +64,15 @@ test('financial commands use PostgreSQL for durable reload, idempotency, version
   const afterRollback = await store.load(owner.id, budget.id);
   assert.equal(afterRollback.events.length, 1);
   assert.equal(afterRollback.version, 1);
-  assert.equal(await prisma.commandReceipt.count({ where: { budgetId: budget.id, idempotencyKey: 'rollback-check' } }), 0);
+  assert.equal(await prisma!.commandReceipt.count({ where: { budgetId: budget.id, idempotencyKey: 'rollback-check' } }), 0);
   assert.equal(complete.setupStep, 'COMPLETE');
   assert.equal(registered.data.id, owner.id);
   await cleanup(email);
 });
 
-test('missing durable budgets are never seeded from in-memory state', async () => {
+test('missing durable budgets are never seeded from in-memory state', { skip: !postgresEnabled }, async () => {
   const budgetStore = new InMemoryBudgetStore();
-  const app = new BudgetApp(Date.now, budgetStore, new FinancialStore(prisma));
+  const app = new BudgetApp(Date.now, budgetStore, new FinancialStore(prisma!));
   const email = `${randomUUID()}@example.test`;
   try {
     app.register(email, 'correct horse');
@@ -88,13 +88,14 @@ test('missing durable budgets are never seeded from in-memory state', async () =
       () => app.recordIncome(token, budget.id, { amountMinor: 500, date: '2026-02-01' }, undefined, options('no-seed')),
       (error: unknown) => error instanceof ApiError && error.code === 'NOT_FOUND',
     );
-    assert.equal(await prisma.budget.findUnique({ where: { id: budget.id } }), null);
+    assert.equal(await prisma!.budget.findUnique({ where: { id: budget.id } }), null);
   } finally {
     await cleanup(email);
   }
 });
 
-test('concurrent commands serialize on the persisted budget version', async () => {
+test('concurrent commands serialize on the persisted budget version', { skip: !postgresEnabled }, async () => {
+  const { PrismaClient } = await import('@prisma/client');
   const firstPrisma = new PrismaClient();
   const secondPrisma = new PrismaClient();
   const email = `${randomUUID()}@example.test`;
@@ -118,13 +119,13 @@ test('concurrent commands serialize on the persisted budget version', async () =
     assert.equal(errors.length, 1);
     assert.ok(errors[0] instanceof ApiError);
     assert.equal((errors[0] as ApiError).code, 'CONFLICT');
-    assert.equal(await prisma.commandReceipt.count({ where: { budgetId: budget.id } }), 1);
-    assert.equal(await prisma.financialEvent.count({ where: { budgetId: budget.id } }), 1);
-    assert.equal((await new FinancialStore(prisma).load(owner.id, budget.id)).version, 1);
+    assert.equal(await prisma!.commandReceipt.count({ where: { budgetId: budget.id } }), 1);
+    assert.equal(await prisma!.financialEvent.count({ where: { budgetId: budget.id } }), 1);
+    assert.equal((await new FinancialStore(prisma!).load(owner.id, budget.id)).version, 1);
   } finally {
     await Promise.all([firstPrisma.$disconnect(), secondPrisma.$disconnect()]);
     await cleanup(email);
   }
 });
 
-after(async () => prisma.$disconnect());
+after(async () => { if (prisma) await prisma.$disconnect(); });
