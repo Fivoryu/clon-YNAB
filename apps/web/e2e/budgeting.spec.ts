@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 
+const openSection = async (page: any, name: 'Overview' | 'Plan' | 'Activity' | 'Accounts' | 'History' | 'Data') => {
+  await page.getByRole('navigation', { name: 'Budget workspace' }).getByRole('button', { name: new RegExp(`^${name}`) }).click();
+};
+
 test('completes the first-slice budgeting journey with server-reported values', async ({ page }) => {
   const email = `ynab-e2e-${randomUUID()}@example.com`;
   const password = 'playwright-password';
@@ -17,7 +21,7 @@ test('completes the first-slice budgeting journey with server-reported values', 
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('status')).toHaveText('Signed in. Start or resume your budget setup.');
   await page.getByRole('button', { name: 'Start or resume setup' }).click();
-  await expect(page.getByRole('heading', { name: 'Budget setup' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Prepare your workspace.' })).toBeVisible();
 
   await page.getByLabel('Account name').fill('Checking');
   await page.getByLabel('Opening balance (minor units)').fill('500');
@@ -31,31 +35,39 @@ test('completes the first-slice budgeting journey with server-reported values', 
   await page.getByRole('button', { name: 'Load month summary' }).click();
   await expect(summary.getByRole('heading', { name: /Month summary/ })).toBeVisible();
 
+  await openSection(page, 'Activity');
   const incomeForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Record income' }) });
-  const assignmentForm = page.locator('form').filter({ has: page.getByRole('heading', { name: /^Assign$/ }) });
   const spendingForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Record spending' }) });
 
   await incomeForm.getByLabel('Amount (minor units)').fill('1000');
   await incomeForm.getByRole('button', { name: 'Record income' }).click();
   await expect(page.getByRole('status')).toHaveText('Income recorded. Release it explicitly before assigning it.');
+  await openSection(page, 'Overview');
   await expect(summaryValue('Unreleased income')).toHaveText('1000 minor units');
+  await openSection(page, 'Activity');
 
   await incomeForm.getByRole('button', { name: 'Release income' }).click();
   await expect(page.getByRole('status')).toHaveText('Income released and ready to assign.');
+  await openSection(page, 'Overview');
   await expect(summaryValue('Released income')).toHaveText('1000 minor units');
   await expect(summaryValue('Unreleased income')).toHaveText('0 minor units');
+  await openSection(page, 'Plan');
+  const assignmentForm = page.locator('form').filter({ has: page.getByRole('heading', { name: /^Assign$/ }) });
 
   await assignmentForm.getByLabel('Amount (minor units)').fill('600');
   await assignmentForm.getByLabel('Assignment category').selectOption({ label: 'Bills' });
   await assignmentForm.getByRole('button', { name: 'Assign money' }).click();
   await expect(page.getByRole('status')).toHaveText('Money assigned.');
+  await openSection(page, 'Overview');
   await expect(summaryValue('Ready to assign')).toHaveText('900 minor units');
   await expect(category('Bills')).toContainText('Assigned: 600');
+  await openSection(page, 'Activity');
 
   await spendingForm.getByLabel('Amount (minor units)').fill('150');
   await spendingForm.getByLabel('Spending category').selectOption({ label: 'Bills' });
   await spendingForm.getByRole('button', { name: 'Record spending' }).click();
   await expect(page.getByRole('status')).toHaveText('Spending recorded.');
+  await openSection(page, 'Overview');
   await expect(summaryValue('Account balance')).toHaveText('1350 minor units');
   await expect(category('Bills')).toContainText('Assigned: 600 · Available: 450 · Activity: -150');
 });
@@ -89,6 +101,7 @@ test('supports focused transaction history correction and deletion', async ({ pa
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await openSection(page, 'History');
   await expect(page.getByRole('heading', { name: 'Transaction history' })).toBeVisible();
   const historySection = page.getByRole('region', { name: 'Transaction history' });
   await historySection.getByRole('button', { name: 'Load history' }).click();
@@ -120,6 +133,7 @@ test('supports focused transaction history correction and deletion', async ({ pa
   await retainedRow.getByRole('button', { name: 'Confirm delete' }).click();
   await expect(page.getByRole('status')).toHaveText('Transaction deleted.');
   await expect(historySection.getByTestId(`transaction-${retained.transactionId}`)).toHaveCount(0);
+  await openSection(page, 'Overview');
   const accountBalance = page.getByLabel('Month summary').locator('dt').filter({ hasText: /^Account balance$/ }).locator('..').locator('dd');
   await expect(accountBalance).toHaveText('1325 minor units');
 });
@@ -141,6 +155,7 @@ test('integrates account lifecycle and transfers from server projections', async
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await openSection(page, 'Accounts');
   await expect(page.getByRole('heading', { name: 'Accounts', exact: true })).toBeVisible();
   const accounts = page.getByRole('region', { name: 'Accounts' });
   await expect(accounts.getByText('Checking', { exact: true })).toBeVisible();
@@ -160,27 +175,33 @@ test('integrates account lifecycle and transfers from server projections', async
   await archived.getByRole('button', { name: 'Archive' }).click();
   await expect(archived).toContainText('Archived');
 
+  await openSection(page, 'Overview');
   await page.getByRole('button', { name: 'Load month summary' }).click();
   const beforeRta = await rta().locator('dd').innerText();
   const beforeCategory = await category().locator('span').innerText();
+  await openSection(page, 'Activity');
   await page.getByLabel('Transfer source').selectOption({ label: 'Checking' });
   await page.getByLabel('Transfer destination').selectOption({ label: 'Cash' });
   await page.getByLabel('Transfer amount (minor units)').fill('250');
   await page.getByLabel('Transfer date').fill('2026-03-15');
   await page.getByRole('button', { name: 'Record transfer' }).click();
   await expect(page.getByRole('status')).toHaveText('Transfer recorded.');
+  await openSection(page, 'Overview');
   await expect(rta().locator('dd')).toHaveText(beforeRta);
   await expect(category().locator('span')).toHaveText(beforeCategory);
+  await openSection(page, 'Accounts');
   await expect(page.getByText('Checking · 750 minor units')).toBeVisible();
   await expect(page.getByText('Cash · 250 minor units')).toBeVisible();
 
   await page.reload();
   await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await openSection(page, 'History');
   await page.getByRole('button', { name: 'Load history' }).click();
   await expect(page.getByRole('list', { name: 'Transaction history' })).toContainText('Transfer');
   await expect(page.getByRole('list', { name: 'Transaction history' }).getByText('250 minor units')).toHaveCount(1);
       await expect(page.getByLabel('History search')).toBeVisible();
       await expect(page.getByLabel('History account')).toBeVisible();
+      await openSection(page, 'Activity');
       await expect(page.getByLabel('Payee')).toHaveCount(3);
       await expect(page.getByLabel('Memo')).toHaveCount(3);
 });
@@ -210,18 +231,22 @@ test('imports and exports canonical CSV without client-side financial authority'
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Start or resume setup' }).click();
+  await openSection(page, 'Data');
   const csvRegion = page.getByRole('region', { name: 'CSV import and export' });
   await csvRegion.getByLabel('CSV file').setInputFiles({ name: 'transactions.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await csvRegion.getByRole('button', { name: 'Import CSV' }).click();
   await expect(page.getByRole('status')).toHaveText('Imported 3 CSV rows.');
+  await openSection(page, 'History');
   await page.getByRole('button', { name: 'Load history' }).click();
   const history = page.getByRole('list', { name: 'Transaction history' });
   await expect(history.getByRole('listitem')).toHaveCount(3);
   await expect(history).toContainText('Transfer');
   await expect(history).toContainText('Market');
 
+  await openSection(page, 'Data');
+  const refreshedCsvRegion = page.getByRole('region', { name: 'CSV import and export' });
   const downloadPromise = page.waitForEvent('download');
-  await csvRegion.getByRole('button', { name: 'Download CSV' }).click();
+  await refreshedCsvRegion.getByRole('button', { name: 'Download CSV' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe('transactions.csv');
   const stream = await download.createReadStream();
