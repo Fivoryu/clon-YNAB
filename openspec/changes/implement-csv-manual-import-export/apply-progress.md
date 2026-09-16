@@ -98,3 +98,27 @@ These are not missing production code:
 ## Rollback boundary
 
 CSV routes/UI can be disabled or reverted without deleting already committed ordinary history, transfer aggregates, metadata, effects, or command receipts. Never expose raw immutable events as a fallback export and never destructively roll back transfer/history metadata structures after feature use. Existing JSON APIs and financial equations remain the authority.
+
+## Post-merge verification and corrective test fixes
+
+After the fast-forward update from `origin/master` (`4ebd506` to `4e5afe5`), the remaining CSV verification gates were executed against an isolated temporary `postgres:16-alpine` service on `127.0.0.1:55432`. Unrelated Docker containers were preserved.
+
+Two test-only regressions were corrected before the final run:
+
+- `apps/api/test/csv-postgres.test.ts` now selects the newly created `Savings` account from `accounts[]` instead of using the deterministic oldest-account alias, preventing a same-account transfer grammar failure.
+- `apps/api/test/transaction-history-prisma.test.ts` now uses `findFirst` for the non-unique `(budgetId, transactionId)` audit lookup; the Prisma schema does not declare that pair unique.
+
+Observed evidence:
+
+- `DATABASE_URL=postgresql://ynab:ynab_local@127.0.0.1:55432/ynab_dev?schema=public npm run db:validate` — passed.
+- The same database URL with `npm run db:migrate` — passed; all five migrations applied.
+- The same database URL with `npm run db:status` — passed; schema up to date.
+- The same database URL with `npm test` — **79 passed, 0 failed, 0 skipped**.
+- The same database URL with `npm run test:csv` — **21 passed, 0 failed, 0 skipped**.
+- The CSV suite passed durability, restart/rebuild, rollback, idempotency, and concurrency assertions.
+- `npm run typecheck:web` — passed.
+- `npm run build:web` — passed; Next.js emitted only the existing future `allowedDevOrigins` warning.
+- Isolated Playwright run using temporary ports (`3001` API and `3100` web) — **4 passed, 0 failed**. The default port 3000 was occupied by an unrelated container, so the temporary config was removed after verification.
+- `git diff --check` — passed.
+
+The only remaining unchecked rows are the two parent-owned review/delivery gates below. No source implementation task remains for this change.

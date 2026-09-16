@@ -77,12 +77,12 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### TRIANGULATE
 
-- [ ] Run `cd apps/api && npm test -- --runInBand <csv-persistence-test-files>` against disposable PostgreSQL; restart/rebuild from authoritative rows and compare balances, reports, metadata, history, transfer direction, and export bytes. <!-- sdd-owner: implementation -->
-- [ ] Run failure-injection and concurrency commands; verify no receipt, identity, metadata, aggregate, one-sided effect, or version increment survives failure, and only one compatible retry commits. <!-- sdd-owner: implementation -->
+- [x] Run `cd apps/api && npm test -- --runInBand <csv-persistence-test-files>` against disposable PostgreSQL; restart/rebuild from authoritative rows and compare balances, reports, metadata, history, transfer direction, and export bytes. <!-- sdd-owner: implementation -->
+- [x] Run failure-injection and concurrency commands; verify no receipt, identity, metadata, aggregate, one-sided effect, or version increment survives failure, and only one compatible retry commits. <!-- sdd-owner: implementation -->
 
 ### REFACTOR
 
-- [ ] Remove duplicate persistence/projection logic, verify migration preflight and forward-only rollback containment, and rerun focused PostgreSQL plus existing financial/report regression commands. <!-- sdd-owner: implementation -->
+- [x] Remove duplicate persistence/projection logic, verify migration preflight and forward-only rollback containment, and rerun focused PostgreSQL plus existing financial/report regression commands. <!-- sdd-owner: implementation -->
 
 ## Review Unit 3 — API, HTTP, and OpenAPI
 
@@ -129,7 +129,7 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ### TRIANGULATE
 
-- [ ] Run the focused web command, established Playwright/E2E command, and `cd apps/api && npm test -- --runInBand <existing-regression-files>`; verify PostgreSQL-backed results after reload/restart and report neutrality. <!-- sdd-owner: implementation -->
+- [x] Run the focused web command, established Playwright/E2E command, and `cd apps/api && npm test -- --runInBand <existing-regression-files>`; verify PostgreSQL-backed results after reload/restart and report neutrality. <!-- sdd-owner: implementation -->
 - [x] Record export/import round-trip bytes, rollback/no-partial-state evidence, concurrency/idempotency evidence from Unit 2, and exact changed-line counts for this unit. <!-- sdd-owner: implementation -->
 
 ### REFACTOR

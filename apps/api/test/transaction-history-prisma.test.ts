@@ -81,7 +81,7 @@ test('PostgreSQL folds two replacements before deleting a transaction', { skip: 
     assert.equal(summary.accountBalanceMinor, 1000);
     assert.equal(rows.length, 4);
     assert.equal(new Set(rows.slice(0, 3).map(row => row.createdAt.getTime())).size, 3);
-    const audit = await prisma!.transactionDeletionAudit.findUnique({ where: { budgetId_transactionId: { budgetId: budget.id, transactionId: original.id } } });
+    const audit = await prisma!.transactionDeletionAudit.findFirst({ where: { budgetId: budget.id, transactionId: original.id } });
     assert.equal(audit?.actorId, owner.id);
     assert.equal(audit?.transactionId, original.id);
   } finally {

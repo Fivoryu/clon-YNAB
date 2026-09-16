@@ -23,12 +23,14 @@ test('PostgreSQL CSV batch is durable, atomic, idempotent and lock/version safe'
     budgetId = (await app.createBudget(token)).data.id;
     await app.saveSetup(token, budgetId, { openingBalanceMinor: 1000, accountName: 'Checking', categories: ['Food'] });
     const first = (await app.getBudget(token, budgetId)).data;
-    const second = (await app.createAccount(token, budgetId, { name: 'Savings', kind: 'checking', openingBalanceMinor: 500 }, undefined, { idempotencyKey: 'second-account', expectedVersion: 0 })).data.account;
+    await app.createAccount(token, budgetId, { name: 'Savings', kind: 'checking', openingBalanceMinor: 500 }, undefined, { idempotencyKey: 'second-account', expectedVersion: 0 });
     const current = (await app.getBudget(token, budgetId)).data;
-    const account = current.account!.id;
+    const account = first.account!.id;
+    const savings = current.accounts.find(candidate => candidate.name === 'Savings');
+    assert.ok(savings);
     const category = current.categories[0].id;
     const payload = csv([
-      `2026-09-13,TRANSFER,${account}=>${second.id},100,,Move,`,
+      `2026-09-13,TRANSFER,${account}=>${savings.id},100,,Move,`,
       `2026-09-14,SPENDING,${account},125,${category},Market,Food`,
       `2026-09-15,INCOME,${account},300,,Employer,Pay`,
     ]);
