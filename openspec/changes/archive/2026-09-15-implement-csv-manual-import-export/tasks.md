@@ -138,5 +138,5 @@ This plan assumes the approved `accounts[]`/oldest-account alias, transfer aggre
 
 ## Parent Gate Before Apply
 
-- [ ] Approve the four-unit `ask-on-risk` `stacked-to-main` delivery and the forecast before apply; stop and re-slice if any unit exceeds 400 authored changed lines or crosses an additional architectural boundary. <!-- sdd-owner: parent -->
-- [ ] Start or reuse bounded review for each unit and require focused commands, PostgreSQL restart/rebuild/rollback/concurrency evidence, migration containment, and an independent rollback boundary before merging the next unit. <!-- sdd-owner: parent -->
+- [x] Approve the four-unit `ask-on-risk` `stacked-to-main` delivery and the forecast before apply; stop and re-slice if any unit exceeds 400 authored changed lines or crosses an additional architectural boundary. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review for each unit and require focused commands, PostgreSQL restart/rebuild/rollback/concurrency evidence, migration containment, and an independent rollback boundary before merging the next unit. <!-- sdd-owner: parent -->

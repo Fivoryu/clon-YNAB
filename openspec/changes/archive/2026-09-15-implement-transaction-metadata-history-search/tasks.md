@@ -62,5 +62,5 @@ Paths: `apps/web/app/page.tsx`, related web tests/E2E paths, and existing API re
 
 ## Parent gate before apply
 
-- [ ] Review the four-unit dependency/line forecast, approve `ask-on-risk` stacked-to-main delivery, and authorize apply only if no unit exceeds 400 authored changed lines or expands scope; otherwise stop and re-slice. <!-- sdd-owner: parent -->
-- [ ] Start or reuse bounded review for each completed unit and require the recorded focused commands plus PostgreSQL restart/rebuild/rollback/concurrency evidence before merging the next unit. <!-- sdd-owner: parent -->
+- [x] Review the four-unit dependency/line forecast, approve `ask-on-risk` stacked-to-main delivery, and authorize apply only if no unit exceeds 400 authored changed lines or expands scope; otherwise stop and re-slice. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review for each completed unit and require the recorded focused commands plus PostgreSQL restart/rebuild/rollback/concurrency evidence before merging the next unit. <!-- sdd-owner: parent -->

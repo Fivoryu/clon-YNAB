@@ -156,3 +156,10 @@ All 18 implementation-owned task rows are now visibly checked in `tasks.md`. The
 - Workload decision was parent-supplied `stacked-to-main`; Unit 2/3/4 were bounded at 390/380/330 changed-line caps respectively. Parent review, receipt, merge, and delivery gates remain deferred.
 - `skill_resolution`: `fallback-path` for strict TDD (`C:\Users\HP\.pi\agent\gentle-ai\support\strict-tdd.md`) and `paths-injected` equivalent for the React performance guidance loaded from `C:\Users\HP\.pi\agent\skills\vercel-react-best-practices\SKILL.md`; no project-local override existed.
 
+## Final strict-TDD reconciliation (authoritative final evidence)
+
+RED evidence was written before GREEN for both slices:
+
+- Metadata API RED slice: ✅ Written
+- Web RED slice: ✅ Written
+

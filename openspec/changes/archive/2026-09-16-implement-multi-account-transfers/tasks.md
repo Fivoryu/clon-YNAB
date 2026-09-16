@@ -130,5 +130,5 @@ The estimate excludes generated Prisma artifacts but includes authored migration
 
 ## Parent Gates After Implementation Work
 
-- [ ] Before apply begins, decide whether to authorize the recommended four-slice chained delivery or another explicit strategy; because delivery is `ask-on-risk` and forecast risk is High, do not proceed past the 400-line gate without that decision. <!-- sdd-owner: parent -->
-- [ ] Start or reuse a bounded review for each completed work unit, checking its exact changed-line count, focused test evidence, PostgreSQL durability/concurrency/rollback evidence where applicable, migration containment, and independent rollback boundary. <!-- sdd-owner: parent -->
+- [x] Before apply begins, decide whether to authorize the recommended four-slice chained delivery or another explicit strategy; because delivery is `ask-on-risk` and forecast risk is High, do not proceed past the 400-line gate without that decision. <!-- sdd-owner: parent -->
+- [x] Start or reuse a bounded review for each completed work unit, checking its exact changed-line count, focused test evidence, PostgreSQL durability/concurrency/rollback evidence where applicable, migration containment, and independent rollback boundary. <!-- sdd-owner: parent -->

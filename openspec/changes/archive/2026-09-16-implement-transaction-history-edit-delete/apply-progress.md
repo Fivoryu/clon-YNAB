@@ -227,3 +227,15 @@ Parent-owned lifecycle rows remain deferred unchanged:
 - Consumed status: change `implement-transaction-history-edit-delete`, artifact store `openspec`, apply `ready`, repo-local workspace root with repository root as allowed edit root, no action-context warning; review path remains stacked-to-main and this remediation stayed under the 80-line cap for authored correction code/tests.
 - Fresh remediation authority acquired with state `proceed`; no review, verify, release, commit, or push action was performed. Its first settle was blocked only by the accounting reset; the final fresh verification authority is `sha256:3c5dd7d5b027bbffed9bedb586cbb8e96f675e2a544a2464ca07020e007676ba` and carries no stale remediation binding.
 - Final native settle: outcome `passed`, state `complete`, evidence revision `sha256:ca19ca9bf653f82fa01b0b6dc5071f16d728105f16eee29b433ba287534a194e`.
+
+## Final evidence reconciliation
+
+The historical checkpoint notes above are preserved as an audit trail. They are superseded by the final authoritative task state and verification evidence below:
+
+- Tasks 4.1, 4.2, 4.3, 4.4, 4.5, and 5.4 are complete in `tasks.md`.
+- Migration/backfill and rebuild evidence passed with `migration.test.ts` 2/2 and the isolated PostgreSQL schema/status checks.
+- Replacement/tombstone folding, archived-category retention, audit identity, and report equivalence passed in the focused 28/28 suite and full 79/79 suite.
+- Two-client concurrency, stale-version rejection, idempotent replay, and rollback containment passed in the PostgreSQL-backed persistence suites.
+- Operational rollback evidence is recorded: disable edit/delete routes while retaining fold/report readers, replay lost responses by idempotency key, and never revert to a pre-fold binary after mutations.
+- Web typecheck/build passed and isolated Playwright passed 4/4; port-3000 failures were environmental and not used as final evidence.
+- Delivery metadata is resolved to `ask-on-risk` / `stacked-to-main`; no size exception was used.

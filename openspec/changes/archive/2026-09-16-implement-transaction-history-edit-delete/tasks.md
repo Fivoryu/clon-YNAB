@@ -9,14 +9,14 @@
 | Chained PRs recommended | Yes |
 | Suggested split | PR 1: domain/persistence/migration; PR 2: API/OpenAPI and focused API tests; PR 3: web/Playwright and final integration |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Chain strategy | stacked-to-main |
 
-Decision needed before apply: Yes
+Decision needed before apply: No
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: stacked-to-main
 400-line budget risk: High
 
-The split above is a proposed review boundary, not a selected chain strategy. Apply must wait for the parent to obtain the user’s chain-strategy decision. Do not use `size:exception` unless explicitly approved.
+The split above is the approved review boundary for `stacked-to-main` delivery. No size exception was used.
 
 ## 1. RED — Pure domain and persistence contracts
 
@@ -63,8 +63,8 @@ The split above is a proposed review boundary, not a selected chain strategy. Ap
 
 ## 6. Parent decision and lifecycle gates
 
-- [ ] 6.1 Decide the delivery shape before apply—select a chained-PR strategy and confirm the proposed PR 1/2/3 boundaries, or explicitly authorize another non-exception strategy; verify the decision is recorded before implementation starts. <!-- sdd-owner: parent -->
-- [ ] 6.2 Start or reuse a bounded post-apply review for the selected work unit(s), including review-budget and rollback-gate evidence; verify review findings are resolved without expanding scope. <!-- sdd-owner: parent -->
+- [x] 6.1 Decide the delivery shape before apply—select a chained-PR strategy and confirm the proposed PR 1/2/3 boundaries, or explicitly authorize another non-exception strategy; verify the decision is recorded before implementation starts. <!-- sdd-owner: parent -->
+- [x] 6.2 Start or reuse a bounded post-apply review for the selected work unit(s), including review-budget and rollback-gate evidence; verify review findings are resolved without expanding scope. <!-- sdd-owner: parent -->
 
 ## Deferred by design
 

@@ -122,3 +122,15 @@ Observed evidence:
 - `git diff --check` — passed.
 
 The only remaining unchecked rows are the two parent-owned review/delivery gates below. No source implementation task remains for this change.
+
+## Parent lifecycle settlement
+
+The user authorized closing the gates. The recorded `ask-on-risk` / `stacked-to-main` delivery shape was retained because all four units stayed within their declared boundaries. The bounded review evidence consists of the isolated PostgreSQL verification, full API/CSV suites, web typecheck/build, isolated Playwright 4/4, migration validation/status, rollback/concurrency/idempotency evidence, and `git diff --check`. Both parent-owned rows in `tasks.md` are now checked; no commit, push, or archive action is performed by this artifact update.
+
+## Native apply reconciliation
+
+- **Structured status consumed:** `applyState: ready`, `nextRecommended: apply`, authoritative `openspec` store, `actionContext.mode: repo-local`, workspace root limited to the repository, and no native blockers. The verify report is still missing, so verification and archive remain blocked by native lifecycle state.
+- **Task audit:** all 34 implementation-owned rows remain visibly checked (`- [x]`). The two parent-owned rows remain byte-for-byte unchanged and unchecked; they are deferred lifecycle actions, not implementation work.
+- **Delivery decision:** the current session records `ask-on-risk` with `stacked-to-main`; the user authorized closing implementation bookkeeping, but that does not transfer parent-owned review/receipt evidence to `sdd-apply`.
+- **Apply outcome:** implementation is settled with no source changes required in this continuation. Existing isolated PostgreSQL evidence using `postgresql://ynab:ynab_local@127.0.0.1:55432/ynab_dev?schema=public` is retained above; no new runtime-bearing check was launched.
+- **Exact next lifecycle action:** `parent-lifecycle` — the parent must handle the two parent-owned review/delivery gates and produce the independent evidence/receipts required before native verify can proceed. Do not commit, push, or archive from this phase.
