@@ -36,6 +36,55 @@ enum TransactionStatus {
   WORKING
 }
 
+enum SimulationRunState {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  SYNCING
+  PARTIAL
+  FAILED
+  TIMED_OUT
+  SUCCEEDED
+}
+
+enum SimulationCandidateStatus {
+  PENDING
+  POSTED
+  DUPLICATE
+  REJECTED
+}
+
+enum SimulationRecordStatus {
+  PENDING
+  POSTED
+  REJECTED
+}
+
+enum SimulationCommand {
+  START
+  ADVANCE
+  RETRY
+}
+
+enum SimulationAuditCommand {
+  CREATE
+  START
+  ADVANCE
+  RETRY
+  INSPECT
+}
+
+enum SimulationOutcome {
+  CREATED
+  STARTED
+  ADVANCED
+  RETRIED
+  FAILED
+  TIMED_OUT
+  PARTIAL
+  SUCCEEDED
+}
+
 model User {
   id           String    @id @default(uuid()) @db.Uuid
   email        String    @unique
@@ -44,6 +93,7 @@ model User {
   sessions     Session[]
   budget       Budget?
   deletionAudits TransactionDeletionAudit[]
+  simulationAudits SimulationAuditEntry[]
 }
 
 model Session {
@@ -72,6 +122,15 @@ model Budget {
   transfers  Transfer[]
   commands   CommandReceipt[]
   deletionAudits TransactionDeletionAudit[]
+  simulationScope SimulationScope?
+  simulationRuns SimulationRun[] @relation("SimulationRunBudget")
+  simulationAttempts SimulationAttempt[]
+  simulationCheckpoints SimulationCheckpoint[]
+  simulatedRecords SimulatedRecord[]
+  simulationCandidates SimulationCandidate[]
+  simulationCandidateEvents SimulationCandidateEvent[]
+  simulationAudits SimulationAuditEntry[]
+  simulationReceipts SimulationCommandReceipt[]
   @@index([timezone])
 }
 
@@ -213,4 +272,199 @@ model CommandReceipt {
   createdAt   DateTime @default(now())
   budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Restrict)
   @@unique([budgetId, idempotencyKey])
+}
+
+model SimulationProfile {
+  code           String
+  fixtureVersion String
+  displayLabel   String
+  description    String
+  fixture        Json
+  enabled        Boolean @default(true)
+  runs           SimulationRun[] @relation("SimulationProfileRuns")
+  @@id([code, fixtureVersion])
+  @@index([enabled, code, fixtureVersion])
+}
+
+model SimulationScope {
+  id            String @id @default(uuid()) @db.Uuid
+  budgetId      String @unique @db.Uuid
+  auditSequence Int @default(0)
+  lockVersion   Int @default(0)
+  budget        Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  runs          SimulationRun[] @relation("SimulationRunScope")
+}
+
+model SimulationRun {
+  id                String @id @default(uuid()) @db.Uuid
+  budgetId          String @db.Uuid
+  profileCode       String
+  fixtureVersion    String
+  seed              String
+  scenarioKey       String
+  state             SimulationRunState @default(DISCONNECTED)
+  cursor            Int @default(0)
+  revision          Int @default(0)
+  commandCount      Int @default(0)
+  attemptCount      Int @default(0)
+  processedRecordCount Int @default(0)
+  diagnosticCode    String?
+  diagnosticMessage String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  budget            Budget @relation("SimulationRunBudget", fields: [budgetId], references: [id], onDelete: Restrict, map: "SimulationRun_budget_fkey")
+  scope             SimulationScope @relation("SimulationRunScope", fields: [budgetId], references: [budgetId], onDelete: Restrict, map: "SimulationRun_scope_fkey")
+  profile           SimulationProfile @relation("SimulationProfileRuns", fields: [profileCode, fixtureVersion], references: [code, fixtureVersion], onDelete: Restrict)
+  attempts          SimulationAttempt[]
+  checkpoints       SimulationCheckpoint[]
+  records           SimulatedRecord[]
+  candidates        SimulationCandidate[]
+  audits            SimulationAuditEntry[]
+  @@unique([budgetId, id])
+  @@index([budgetId, state, updatedAt])
+}
+
+model SimulationAttempt {
+  id                String @id @default(uuid()) @db.Uuid
+  budgetId          String @db.Uuid
+  runId             String @db.Uuid
+  sequence          Int
+  idempotencyKey    String
+  command           SimulationCommand
+  priorState        SimulationRunState
+  resultingState    SimulationRunState
+  outcome           SimulationOutcome
+  diagnosticCode    String?
+  diagnosticMessage String?
+  eventAt           DateTime
+  budget            Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  records           SimulatedRecord[]
+  candidateEvents   SimulationCandidateEvent[] @relation("AttemptCandidateEvents")
+  auditEntries      SimulationAuditEntry[] @relation("AttemptAuditEntries")
+  @@unique([budgetId, runId, sequence])
+  @@unique([budgetId, id])
+  @@unique([budgetId, idempotencyKey])
+  @@index([budgetId, runId, eventAt, id])
+}
+
+model SimulationCheckpoint {
+  id                  String @id @default(uuid()) @db.Uuid
+  budgetId            String @db.Uuid
+  runId               String @db.Uuid
+  sequence            Int
+  cursor              Int
+  state               SimulationRunState
+  processedRecordCount Int
+  checkpointAt        DateTime
+  budget              Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  run                 SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  records             SimulatedRecord[]
+  candidateEvents     SimulationCandidateEvent[] @relation("CheckpointCandidateEvents")
+  auditEntries        SimulationAuditEntry[] @relation("CheckpointAuditEntries")
+  @@unique([budgetId, runId, sequence])
+  @@unique([budgetId, id])
+  @@index([budgetId, runId, sequence])
+}
+
+model SimulatedRecord {
+  id              String @id @default(uuid()) @db.Uuid
+  budgetId        String @db.Uuid
+  runId           String @db.Uuid
+  sourceRecordId  String
+  batchIndex      Int
+  deliveryOrdinal Int
+  businessDate    DateTime @db.Date
+  amountMinor     BigInt
+  status          SimulationRecordStatus
+  payee           String?
+  memo            String?
+  checkpointId    String? @db.Uuid
+  attemptId       String @db.Uuid
+  deliveredAt     DateTime
+  budget          Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  run             SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  attempt         SimulationAttempt @relation(fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
+  checkpoint      SimulationCheckpoint? @relation(fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  candidates      SimulationCandidate[]
+  @@unique([budgetId, runId, sourceRecordId, deliveryOrdinal])
+  @@unique([budgetId, id])
+  @@index([budgetId, runId, batchIndex, deliveryOrdinal])
+}
+
+model SimulationCandidate {
+  id                 String @id
+  budgetId           String @db.Uuid
+  runId              String @db.Uuid
+  simulatedRecordId  String @db.Uuid
+  status             SimulationCandidateStatus
+  sourceRecordId     String
+  businessDate       DateTime @db.Date
+  amountMinor        BigInt
+  payee              String?
+  memo               String?
+  provenance         Json
+  budget             Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  run                SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  simulatedRecord    SimulatedRecord @relation(fields: [budgetId, simulatedRecordId], references: [budgetId, id], onDelete: Restrict)
+  lifecycle          SimulationCandidateEvent[]
+  @@unique([budgetId, id])
+  @@index([budgetId, runId, simulatedRecordId])
+}
+
+model SimulationCandidateEvent {
+  id           String @id @default(uuid()) @db.Uuid
+  budgetId     String @db.Uuid
+  candidateId  String
+  sequence     Int
+  priorStatus  SimulationCandidateStatus?
+  status       SimulationCandidateStatus
+  attemptId    String @db.Uuid
+  checkpointId String? @db.Uuid
+  eventAt      DateTime
+  budget       Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  candidate    SimulationCandidate @relation(fields: [budgetId, candidateId], references: [budgetId, id], onDelete: Restrict)
+  attempt      SimulationAttempt @relation("AttemptCandidateEvents", fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
+  checkpoint   SimulationCheckpoint? @relation("CheckpointCandidateEvents", fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  @@unique([budgetId, candidateId, sequence])
+  @@index([budgetId, candidateId, sequence])
+}
+
+model SimulationAuditEntry {
+  id                String @id @default(uuid()) @db.Uuid
+  budgetId          String @db.Uuid
+  runId             String @db.Uuid
+  sequence          Int
+  actorId           String @db.Uuid
+  requestId         String
+  command           SimulationAuditCommand
+  priorState        SimulationRunState
+  resultingState    SimulationRunState
+  outcome           SimulationOutcome
+  attemptId         String? @db.Uuid
+  checkpointId      String? @db.Uuid
+  diagnosticCode    String?
+  diagnosticMessage String?
+  eventAt           DateTime
+  budget            Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  actor             User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  attempt           SimulationAttempt? @relation("AttemptAuditEntries", fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
+  checkpoint        SimulationCheckpoint? @relation("CheckpointAuditEntries", fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  @@unique([budgetId, sequence])
+  @@index([budgetId, runId, sequence])
+}
+
+model SimulationCommandReceipt {
+  id             String @id @default(uuid()) @db.Uuid
+  budgetId       String @db.Uuid
+  idempotencyKey String
+  command        SimulationAuditCommand
+  payloadDigest  String
+  result         Json
+  runId          String? @db.Uuid
+  createdAt      DateTime @default(now())
+  budget         Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  @@unique([budgetId, idempotencyKey])
+  @@index([budgetId, runId, createdAt])
 }

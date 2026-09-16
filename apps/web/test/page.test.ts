@@ -24,6 +24,18 @@ test('web journey keeps the API contract at the browser boundary', () => {
   assert.match(controller, /credentials:\s*['"]include['"]/);
 });
 
+test('web boundary has no provider, credential, linking, or candidate-application flow', () => {
+  assert.doesNotMatch(web, /provider|bank integration|account linking|candidate|apply simulation|real money/i);
+  assert.doesNotMatch(auth, /provider|bank|credential|link account/i);
+  assert.doesNotMatch(web, /calculateAccountBalance|calculateRta|parseTransactionCsv|FinancialEvent|TransferState/);
+  assert.match(controller, /credentials:\s*['\"]include['\"]/);
+  assert.match(controller, /Idempotency-Key/);
+  assert.match(controller, /If-Match/);
+  assert.match(controller, /transactions\/export/);
+  assert.match(controller, /transactions\/import/);
+  assert.match(workspace, /Transaction history/);
+});
+
 test('development web runtime proxies same-origin API calls', () => {
   assert.match(nextConfig, /source:\s*['"]\/api\/v1\/:path\*['"]/);
   assert.match(nextConfig, /destination:\s*['"]http:\/\/localhost:3001\/api\/v1\/:path\*['"]/);

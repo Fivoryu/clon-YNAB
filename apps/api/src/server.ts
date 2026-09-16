@@ -7,7 +7,7 @@ import { CSV_MAX_BYTES } from './planning/csv.ts';
 const json = (res: any, status: number, body: unknown, cookie?: string) => { res.writeHead(status, { 'content-type': 'application/json', ...(cookie ? { 'set-cookie': cookie } : {}) }); res.end(JSON.stringify(body)); };
 const csv = (res: any, bytes: Uint8Array) => { res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="transactions.csv"' }); res.end(Buffer.from(bytes)); };
 const rawBody = async (req: any, maxBytes?: number) => { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); size += value.byteLength; if (maxBytes !== undefined && size > maxBytes) throw new ApiError('VALIDATION_ERROR', 'CSV validation failed', 400, { rows: 0, accepted: 0, rejected: 0, diagnostics: [{ row: 0, field: 'file', code: 'FILE_TOO_LARGE', message: `CSV must not exceed ${maxBytes} bytes` }], diagnosticsTruncated: false }); chunks.push(value); } return Buffer.concat(chunks); };
-const bodyOf = async (req: any) => { const bytes = await rawBody(req); if (!bytes.length) return {}; try { return JSON.parse(bytes.toString('utf8')); } catch { throw new ApiError('VALIDATION_ERROR', 'Request body must be valid JSON'); } };
+const bodyOf = async (req: any, maxBytes?: number) => { let bytes: Buffer; try { bytes = await rawBody(req, maxBytes); } catch (error) { if (maxBytes !== undefined) throw new ApiError('VALIDATION_ERROR', 'Request body is too large'); throw error; } if (!bytes.length) return {}; try { return JSON.parse(bytes.toString('utf8')); } catch { throw new ApiError('VALIDATION_ERROR', 'Request body must be valid JSON'); } };
 const tokenOf = (req: any) => (req.headers.cookie ?? '').split(';').map((part: string) => part.trim()).find((part: string) => part.startsWith('sid='))?.slice(4) ?? '';
 const cookie = (token: string, maxAge = 8 * 60 * 60) => `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
 export const commandOptions = (req: any) => {
@@ -23,6 +23,7 @@ export const commandOptions = (req: any) => {
   }
   return { idempotencyKey: req.headers['idempotency-key']?.toString(), expectedVersion };
 };
+const simulationOptions = (req: any) => { const options = commandOptions(req); return { idempotencyKey: options.idempotencyKey, expectedRevision: options.expectedVersion }; };
 const requireCsvContentType = (req: any) => {
   const value = req.headers['content-type'];
   if (Array.isArray(value) || typeof value !== 'string' || !/^text\/csv(?:\s*;\s*charset\s*=\s*utf-8\s*)?$/i.test(value)) throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be text/csv with optional charset=utf-8');
@@ -52,7 +53,25 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     if (req.method === 'POST' && csvImport?.[1]) { requireCsvContentType(req); const options = commandOptions(req); const bytes = await rawBody(req, CSV_MAX_BYTES); return json(res, 201, await app.importTransactionsCsv(token, csvImport[1], bytes, requestId, options)); }
     const csvExport = path.match(/^\/api\/v1\/budgets\/([^/]+)\/transactions\/export$/);
     if (req.method === 'GET' && csvExport?.[1]) return csv(res, await app.exportTransactionsCsv(token, csvExport[1]));
-    const input = await bodyOf(req);
+    const simulation = path.match(/^\/api\/v1\/budgets\/([^/]+)\/simulations(?:\/(.*))?$/);
+        const input = await bodyOf(req, simulation ? 1_048_576 : undefined);
+        if (simulation?.[1]) {
+          const budgetId = simulation[1]; const action = simulation[2];
+          if (req.method === 'GET' && action === 'profiles') return json(res, 200, await app.listSimulationProfiles(token, budgetId, requestId));
+          if (req.method === 'POST' && action === 'runs') { const options = commandOptions(req); return json(res, 201, await app.createSimulationRun(token, budgetId, input, requestId, options.idempotencyKey)); }
+          const run = action?.match(/^runs\/([^/]+)(?:\/(start|advance|retry|inspect|candidates|checkpoints|audit))?$/);
+          if (run?.[1] && req.method === 'GET' && !run[2]) return json(res, 200, await app.getSimulationRun(token, budgetId, run[1], requestId));
+          if (run?.[1] && req.method === 'GET' && run[2] === 'candidates') return json(res, 200, await app.getSimulationCandidates(token, budgetId, run[1], requestId));
+          if (run?.[1] && req.method === 'GET' && run[2] === 'checkpoints') return json(res, 200, await app.getSimulationCheckpoints(token, budgetId, run[1], requestId));
+          if (run?.[1] && req.method === 'GET' && run[2] === 'audit') return json(res, 200, await app.getSimulationAudit(token, budgetId, run[1], requestId));
+          if (run?.[1] && req.method === 'POST' && run[2]) {
+            const options = simulationOptions(req);
+            if (run[2] === 'start') return json(res, 200, await app.startSimulationRun(token, budgetId, run[1], requestId, options));
+            if (run[2] === 'advance') return json(res, 200, await app.advanceSimulationRun(token, budgetId, run[1], requestId, options));
+            if (run[2] === 'retry') return json(res, 200, await app.retrySimulationRun(token, budgetId, run[1], requestId, options));
+            return json(res, 200, await app.inspectSimulationRun(token, budgetId, run[1], input, requestId, options));
+          }
+        }
     if (req.method === 'POST' && path === '/api/v1/auth/register') return json(res, 201, await app.register(input.email, input.password, requestId));
     if (req.method === 'POST' && path === '/api/v1/auth/sign-in') { const result = await app.signIn(input.email, input.password, requestId); return json(res, 200, result, cookie(result.data.sessionToken)); }
     if (req.method === 'POST' && path === '/api/v1/auth/sign-out') { await app.signOut(token); return json(res, 200, { data: null, requestId }, cookie('', 0)); }
@@ -89,13 +108,14 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
 });
 
 export const startProductionServer = async () => {
-  const [{ PrismaClient }, { PrismaBudgetStore }, { FinancialStore }] = await Promise.all([
+  const [{ PrismaClient }, { PrismaBudgetStore }, { FinancialStore }, { PrismaSimulationStore }] = await Promise.all([
     import('@prisma/client'),
     import('./persistence/budget-store.ts'),
     import('./persistence/financial-store.ts'),
+        import('./persistence/simulation-store.ts'),
   ]);
   const prisma = new PrismaClient();
-  const app = new BudgetApp(Date.now, new PrismaBudgetStore(prisma), new FinancialStore(prisma));
+  const app = new BudgetApp(Date.now, new PrismaBudgetStore(prisma), new FinancialStore(prisma), new PrismaSimulationStore(prisma));
   const server = createServer(app);
   server.listen(Number(process.env.PORT || 3001));
   return server;

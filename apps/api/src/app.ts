@@ -6,6 +6,10 @@ import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, se
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
 import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
+import { InMemorySimulationStore } from './persistence/in-memory-simulation-store.ts';
+import { SimulationPersistenceError, type SimulationCommandInput, type SimulationCreateCommand, type SimulationInspectCommand, type SimulationStore, type SimulationResult } from './persistence/simulation-store.ts';
+import { SimulationDomainError, codePointLength, type SimulationAuditProjection, type SimulationCandidate, type SimulationCheckpointProjection, type SimulationProjection, type SimulationProfileSummary, type SimulationRunProjection } from './simulation/types.ts';
+import { validateCatalogInput } from './simulation/catalog.ts';
 
 type Clock = () => number;
 export type Envelope<T> = { data: T; requestId: string };
@@ -17,6 +21,9 @@ export type PublicAccount = { id: string; name: string; kind: 'CASH' | 'CHECKING
     export type AccountPatch = { name?: unknown };
 export type SetupInput = { openingBalanceMinor?: number; accountName?: string; accountType?: string; categories?: string[] };
 export type CommandOptions = { idempotencyKey?: string; expectedVersion?: number };
+export type SimulationCommandOptions = { idempotencyKey?: string; expectedRevision?: number };
+export type SimulationCreateInput = { profileCode?: unknown; fixtureVersion?: unknown; seed?: unknown; [key: string]: unknown };
+export type SimulationInspectInput = { view?: unknown; [key: string]: unknown };
 export type CsvImportResult = { rows: number; accepted: number; rejected: number; diagnostics: CsvDiagnostic[]; diagnosticsTruncated: boolean; version: number };
 export type TransactionEditInput = { amountMinor?: unknown; date?: unknown; categoryId?: unknown; payee?: unknown; memo?: unknown };
 export type TransactionDeleteInput = { confirmed?: unknown; reason?: unknown };
@@ -48,13 +55,32 @@ export class BudgetApp {
   private readonly now: Clock;
   private readonly budgetStore: BudgetStore;
   private readonly financialStore: Pick<FinancialStore, 'execute' | 'load'> | InMemoryFinancialStore;
+  private readonly simulationStore: SimulationStore;
   private readonly reports = new ReportService();
-  constructor(now: Clock = Date.now, store?: BudgetStore | FinancialStore, financialStore?: FinancialStore) {
+  constructor(now: Clock = Date.now, store?: BudgetStore | FinancialStore, financialStore?: FinancialStore, simulationStore?: SimulationStore) {
     this.now = now;
     if (store instanceof FinancialStore) { this.budgetStore = new InMemoryBudgetStore(); this.financialStore = store; }
     else { this.budgetStore = store ?? new InMemoryBudgetStore(); this.financialStore = financialStore ?? (this.budgetStore instanceof InMemoryBudgetStore ? new InMemoryFinancialStore(this.budgetStore) : new FinancialStore()); }
+    this.simulationStore = simulationStore ?? new InMemorySimulationStore();
   }
   private storeError(error: unknown): never { if (error instanceof BudgetStoreError) throw new ApiError(error.code, error.message); throw error; }
+  private simulationError(error: unknown): never {
+    if (error instanceof ApiError) throw error;
+    if (error instanceof SimulationPersistenceError) {
+      if (error.code === 'NOT_FOUND') throw new ApiError('NOT_FOUND', 'Resource not found');
+      if (error.code === 'CONFLICT') throw new ApiError('CONFLICT', error.message);
+      throw new ApiError('VALIDATION_ERROR', error.message);
+    }
+    if (error instanceof SimulationDomainError) {
+      const conflict = error.code === 'ILLEGAL_TRANSITION';
+      throw new ApiError(conflict ? 'CONFLICT' : 'VALIDATION_ERROR', error.diagnostic.message, conflict ? 409 : 400, error.diagnostic);
+    }
+    throw error;
+  }
+  private registerSimulationBudget(ownerId: string, budgetId: string) {
+    const store = this.simulationStore as SimulationStore & { registerBudget?: (ownerId: string, budgetId: string) => void };
+    store.registerBudget?.(ownerId, budgetId);
+  }
   private result<T>(value: T | Promise<T>, requestId: string | undefined, map: (value: T) => unknown) { return value instanceof Promise ? value.then(item => map(item)).catch(error => this.storeError(error)) : map(value); }
 
   register(email: string, password: string, requestId?: string) {
@@ -90,7 +116,7 @@ export class BudgetApp {
       const persist = (owner: StoredUser | null) => {
         if (!owner) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
         const state: BudgetState = { id: randomUUID(), setupStep: 'ACCOUNT', timezone: 'UTC', version: 0, account: null, categories: [], events: [] };
-        try { return this.result(this.budgetStore.createBudget(owner.id, state), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); }
+        try { return this.result(this.budgetStore.createBudget(owner.id, state), requestId, saved => { this.registerSimulationBudget(owner.id, saved.id); return ok(publicBudget(saved), requestId); }); } catch (error) { return this.storeError(error); }
       };
       return found instanceof Promise ? found.then(persist) : persist(found);
     };
@@ -336,6 +362,64 @@ export class BudgetApp {
   }
   async getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
   async getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
+
+  async listSimulationProfiles(token: string, budgetId: string, requestId?: string): Promise<Envelope<SimulationProfileSummary[]>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    try { return ok(await this.simulationStore.listProfiles(user.id, budgetId), requestId); } catch (error) { return this.simulationError(error); }
+  }
+  async createSimulationRun(token: string, budgetId: string, input: SimulationCreateInput, requestId?: string, idempotencyKey?: string): Promise<Envelope<SimulationResult>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    const normalized = this.normalizeSimulationCreate(input); const key = this.simulationKey(idempotencyKey);
+    const command: SimulationCreateCommand = { ownerId: user.id, budgetId, ...normalized, idempotencyKey: key, actorId: user.id, requestId, clock: this.now };
+    try { return ok(await this.simulationStore.createRun(command), requestId); } catch (error) { return this.simulationError(error); }
+  }
+  async startSimulationRun(token: string, budgetId: string, runId: string, requestId?: string, options: SimulationCommandOptions = {}): Promise<Envelope<SimulationResult>> { return this.executeSimulationRun(token, budgetId, runId, 'START', requestId, options); }
+  async advanceSimulationRun(token: string, budgetId: string, runId: string, requestId?: string, options: SimulationCommandOptions = {}): Promise<Envelope<SimulationResult>> { return this.executeSimulationRun(token, budgetId, runId, 'ADVANCE', requestId, options); }
+  async retrySimulationRun(token: string, budgetId: string, runId: string, requestId?: string, options: SimulationCommandOptions = {}): Promise<Envelope<SimulationResult>> { return this.executeSimulationRun(token, budgetId, runId, 'RETRY', requestId, options); }
+  private async executeSimulationRun(token: string, budgetId: string, runId: string, commandName: SimulationCommandInput['command'], requestId: string | undefined, options: SimulationCommandOptions): Promise<Envelope<SimulationResult>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    const key = this.simulationKey(options.idempotencyKey); const expectedRevision = this.simulationRevision(options.expectedRevision);
+    const command: SimulationCommandInput = { ownerId: user.id, budgetId, runId, command: commandName, idempotencyKey: key, expectedRevision, actorId: user.id, requestId, clock: this.now };
+    try { return ok(await this.simulationStore.execute(command), requestId); } catch (error) { return this.simulationError(error); }
+  }
+  async getSimulationRun(token: string, budgetId: string, runId: string, requestId?: string): Promise<Envelope<SimulationRunProjection>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    try { return ok(await this.simulationStore.loadRun({ ownerId: user.id, budgetId, runId }), requestId); } catch (error) { return this.simulationError(error); }
+  }
+  async getSimulationCandidates(token: string, budgetId: string, runId: string, requestId?: string): Promise<Envelope<SimulationCandidate[]>> { return this.simulationRead(token, budgetId, runId, requestId, query => this.simulationStore.listCandidates(query)); }
+  async getSimulationCheckpoints(token: string, budgetId: string, runId: string, requestId?: string): Promise<Envelope<SimulationCheckpointProjection[]>> { return this.simulationRead(token, budgetId, runId, requestId, query => this.simulationStore.listCheckpoints(query)); }
+  async getSimulationAudit(token: string, budgetId: string, runId: string, requestId?: string): Promise<Envelope<SimulationAuditProjection[]>> { return this.simulationRead(token, budgetId, runId, requestId, query => this.simulationStore.listAudit(query)); }
+  private async simulationRead<T>(token: string, budgetId: string, runId: string, requestId: string | undefined, read: (query: { ownerId: string; budgetId: string; runId: string }) => Promise<T>): Promise<Envelope<T>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    try { return ok(await read({ ownerId: user.id, budgetId, runId }), requestId); } catch (error) { return this.simulationError(error); }
+  }
+  async inspectSimulationRun(token: string, budgetId: string, runId: string, input: SimulationInspectInput, requestId?: string, options: SimulationCommandOptions = {}): Promise<Envelope<{ view: SimulationInspectCommand['view']; projection: Partial<SimulationProjection>; replayed?: boolean }>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    const view = this.normalizeSimulationView(input); const key = this.simulationKey(options.idempotencyKey); const expectedRevision = this.simulationRevision(options.expectedRevision);
+    const command: SimulationInspectCommand = { ownerId: user.id, budgetId, runId, view, idempotencyKey: key, actorId: user.id, requestId, clock: this.now };
+    try {
+      if (expectedRevision === undefined) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
+      const result = await this.simulationStore.inspect(command);
+      const projection = result.projection;
+      const selected: Partial<SimulationProjection> = view === 'STATUS' ? { run: projection.run } : view === 'CANDIDATES' ? { candidates: projection.candidates } : view === 'CHECKPOINTS' ? { checkpoints: projection.checkpoints } : { audits: projection.audits };
+      return ok({ view, projection: selected, ...(result.replayed ? { replayed: true } : {}) }, requestId);
+    } catch (error) { return this.simulationError(error); }
+  }
+  private normalizeSimulationCreate(input: SimulationCreateInput) {
+    try {
+      validateCatalogInput(input);
+      if (!input || typeof input !== 'object' || Object.keys(input).some(key => !['profileCode', 'fixtureVersion', 'seed'].includes(key))) throw new ApiError('VALIDATION_ERROR', 'Unsupported simulation input');
+      const values = [input.profileCode, input.fixtureVersion, input.seed];
+      if (values.some(value => typeof value !== 'string' || value.length === 0 || codePointLength(value) > 128)) throw new ApiError('VALIDATION_ERROR', 'Simulation profile, fixture version, and seed are bounded strings');
+      return { profileCode: input.profileCode as string, fixtureVersion: input.fixtureVersion as string, seed: input.seed as string };
+    } catch (error) { if (error instanceof ApiError) throw error; return this.simulationError(error); }
+  }
+  private normalizeSimulationView(input: SimulationInspectInput) {
+    if (!input || typeof input !== 'object' || Object.keys(input).some(key => key !== 'view') || !['STATUS', 'CANDIDATES', 'CHECKPOINTS', 'AUDIT'].includes(input.view as string)) throw new ApiError('VALIDATION_ERROR', 'Simulation inspect view is invalid');
+    return input.view as SimulationInspectCommand['view'];
+  }
+  private simulationKey(value: unknown) { if (typeof value !== 'string' || !value.trim()) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); return value.trim(); }
+  private simulationRevision(value: unknown) { if (!Number.isSafeInteger(value)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required'); return value as number; }
 
   private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false, persistAccounts = false, payloadDigest?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); if (requireVersion && !Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');

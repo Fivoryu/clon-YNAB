@@ -9,6 +9,7 @@ info:
     dashboard values, transaction history, and manual CSV import/export. Splits, cards, reconciliation, targets,
     scheduled transactions, future income, refunds, reimbursements, returns, and
     cleared/pending/uncleared states remain unsupported and are not part of this contract.
+    Bank-provider simulation is a fictional local simulation only: no network, credentials are not accepted, provider connectivity, no real money, and no financial effects are accepted; candidate application is deferred.
 servers:
   - url: /
 paths:
@@ -319,7 +320,125 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
-components:
+  /api/v1/budgets/{budgetId}/simulations/profiles:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    get:
+      summary: List fictional local simulation profiles
+      description: Fictional/local simulation metadata only; no network, credentials, provider affiliation, no real money, and no financial effects.
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/SimulationIdempotencyKey' }]
+    post:
+      summary: Create a local simulation run
+      description: Creates a disconnected deterministic fixture run. Credentials, endpoints, network/provider data, and financial transaction fields are rejected.
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SimulationCreateInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/SimulationSuccess' }
+        '400': { $ref: '#/components/responses/SimulationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/start:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/SimulationIdempotencyKey' }, { $ref: '#/components/parameters/SimulationIfMatch' }]
+    post:
+      summary: Start a local simulation run
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SimulationControlInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '400': { $ref: '#/components/responses/SimulationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/advance:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/SimulationIdempotencyKey' }, { $ref: '#/components/parameters/SimulationIfMatch' }]
+    post:
+      summary: Advance one deterministic fixture transition
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SimulationControlInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '400': { $ref: '#/components/responses/SimulationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/retry:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/SimulationIdempotencyKey' }, { $ref: '#/components/parameters/SimulationIfMatch' }]
+    post:
+      summary: Retry a fixture-legal failed, timed-out, or partial run
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SimulationControlInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '400': { $ref: '#/components/responses/SimulationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }]
+    get:
+      summary: Read simulation run status
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/candidates:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }]
+    get:
+      summary: Read side-effect-free candidate projections
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/checkpoints:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }]
+    get:
+      summary: Read ordered simulation checkpoints
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/audit:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }]
+    get:
+      summary: Read ordered simulation audit entries
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/budgets/{budgetId}/simulations/runs/{runId}/inspect:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/SimulationIdempotencyKey' }, { $ref: '#/components/parameters/SimulationIfMatch' }]
+    post:
+      summary: Inspect one audited simulation projection
+      description: Records an idempotent inspect audit activity without changing run state or simulation revision.
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SimulationInspectInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/SimulationSuccess' }
+        '400': { $ref: '#/components/responses/SimulationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  components:
   securitySchemes:
     cookieAuth:
       type: apiKey
@@ -358,6 +477,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string }
     Month:
       name: month
       in: query
@@ -382,6 +506,18 @@ components:
       required: true
       description: Required for financial commands; the same key and payload replay the stored result.
       schema: { type: string, minLength: 1 }
+    SimulationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Required for simulation create/control/inspect; identical canonical payloads replay without another attempt or revision.
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    SimulationIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Expected simulation revision, not the financial budget version; weak or quoted integer syntax is accepted.
+      schema: { type: string, pattern: '^(?:[0-9]+|"[0-9]+"|W/"[0-9]+")$' }
     IfMatch:
       name: If-Match
       in: header
@@ -410,6 +546,8 @@ components:
     Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     Conflict: { description: State or concurrency conflict, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+    SimulationSuccess: { description: Simulation result envelope; data contains only isolated local simulation projections., content: { application/json: { schema: { $ref: '#/components/schemas/SimulationSuccessEnvelope' } } } }
+    SimulationError: { description: Safe simulation validation or persistence error without SQL, credentials, network details, or foreign-resource existence., content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     CsvImportSuccess: { description: CSV import committed atomically, content: { application/json: { schema: { $ref: '#/components/schemas/CsvImportEnvelope' } } } }
     UnsupportedMediaType: { description: CSV import requires text/csv with optional charset=utf-8, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     InternalError: { description: Unexpected internal failure, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
@@ -436,6 +574,20 @@ components:
     CsvImportDetails: { type: object, required: [rows, accepted, rejected, diagnostics, diagnosticsTruncated], properties: { rows: { type: integer, minimum: 0 }, accepted: { type: integer, minimum: 0 }, rejected: { type: integer, minimum: 0 }, diagnostics: { type: array, maxItems: 1000, items: { $ref: '#/components/schemas/CsvDiagnostic' } }, diagnosticsTruncated: { type: boolean } } }
     CsvImportResult: { allOf: [{ $ref: '#/components/schemas/CsvImportDetails' }], type: object, required: [version], properties: { version: { type: integer, minimum: 0 } } }
     CsvImportEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/CsvImportResult' } } }
+    SimulationRunState: { type: string, enum: [DISCONNECTED, CONNECTING, CONNECTED, SYNCING, PARTIAL, FAILED, TIMED_OUT, SUCCEEDED] }
+    SimulationCandidateStatus: { type: string, enum: [PENDING, POSTED, DUPLICATE, REJECTED] }
+    SimulationProfile: { type: object, required: [code, displayLabel, description, fixtureVersion, enabled], properties: { code: { type: string, maxLength: 128 }, displayLabel: { type: string, maxLength: 128 }, description: { type: string, maxLength: 512 }, fixtureVersion: { type: string, maxLength: 128 }, enabled: { type: boolean } } }
+    SimulationCreateInput: { type: object, required: [profileCode, fixtureVersion, seed], additionalProperties: false, properties: { profileCode: { type: string, maxLength: 128 }, fixtureVersion: { type: string, maxLength: 128 }, seed: { type: string, minLength: 1, maxLength: 128 } }, description: No credentials, endpoints, URLs, provider metadata, or financial transaction fields. }
+    SimulationControlInput: { type: object, additionalProperties: false, maxProperties: 0 }
+    SimulationInspectInput: { type: object, required: [view], additionalProperties: false, properties: { view: { type: string, enum: [STATUS, CANDIDATES, CHECKPOINTS, AUDIT] } } }
+    SimulationRun: { type: object, required: [runId, state, cursor, revision, processedRecordCount], properties: { runId: { type: string }, state: { $ref: '#/components/schemas/SimulationRunState' }, cursor: { type: integer, minimum: 0 }, revision: { type: integer, minimum: 0 }, processedRecordCount: { type: integer, minimum: 0 }, commandCount: { type: integer, minimum: 0 }, attemptCount: { type: integer, minimum: 0 }, profileCode: { type: string }, fixtureVersion: { type: string }, seed: { type: string, maxLength: 128 }, lastDiagnostic: { $ref: '#/components/schemas/SimulationDiagnostic' } } }
+    SimulationDiagnostic: { type: object, required: [code, message], properties: { code: { type: string, maxLength: 64 }, message: { type: string, maxLength: 512 } } }
+    SimulationCandidate: { type: object, required: [id, runId, status, sourceRecordId, businessDate, amountMinor, provenance, lifecycle], properties: { id: { type: string }, runId: { type: string }, status: { $ref: '#/components/schemas/SimulationCandidateStatus' }, sourceRecordId: { type: string, maxLength: 128 }, businessDate: { type: string, format: date }, amountMinor: { type: integer, minimum: 1 }, payee: { type: string, nullable: true }, memo: { type: string, nullable: true }, provenance: { type: object }, lifecycle: { type: array, maxItems: 5000, items: { type: object } } } }
+    SimulationCheckpoint: { type: object, required: [id, sequence, cursor, state, processedRecordCount], properties: { id: { type: string }, sequence: { type: integer, minimum: 1 }, cursor: { type: integer, minimum: 0 }, state: { $ref: '#/components/schemas/SimulationRunState' }, processedRecordCount: { type: integer, minimum: 0 } } }
+    SimulationAudit: { type: object, required: [id, sequence, actorId, budgetId, runId, requestId, command, priorState, resultingState, outcome], properties: { id: { type: string }, sequence: { type: integer, minimum: 1 }, actorId: { type: string }, budgetId: { type: string }, runId: { type: string }, "requestId": { type: string, minLength: 1 }, command: { type: string }, priorState: { $ref: '#/components/schemas/SimulationRunState' }, resultingState: { $ref: '#/components/schemas/SimulationRunState' }, outcome: { type: string } } }
+    SimulationProjection: { type: object, properties: { run: { $ref: '#/components/schemas/SimulationRun' }, candidates: { type: array, items: { $ref: '#/components/schemas/SimulationCandidate' } }, checkpoints: { type: array, items: { $ref: '#/components/schemas/SimulationCheckpoint' } }, audits: { type: array, items: { $ref: '#/components/schemas/SimulationAudit' } } } }
+    SimulationResult: { allOf: [{ $ref: '#/components/schemas/SimulationProjection' }], type: object, properties: { outcome: { type: string }, simulationRevision: { type: integer, minimum: 0 }, replayed: { type: boolean } } }
+    SimulationSuccessEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { oneOf: [{ $ref: '#/components/schemas/SimulationResult' }, { $ref: '#/components/schemas/SimulationProfile' }, { $ref: '#/components/schemas/SimulationProjection' }] } } }
     User: { type: object, required: [id, email], properties: { id: { type: string }, email: { type: string, format: email } } }
     Session: { type: object, required: [user, sessionToken], properties: { user: { $ref: '#/components/schemas/User' }, sessionToken: { type: string, description: Opaque session token returned for this first slice } } }
     Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer } } }
