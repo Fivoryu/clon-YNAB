@@ -4,7 +4,7 @@
 
 Let one user create and resume a personal first-slice budget with one supported cash/checking-style account and editable categories.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: One personal budget
 

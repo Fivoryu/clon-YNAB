@@ -1,0 +1,12 @@
+'use client';
+
+import { useState } from 'react';
+import { AppShell } from '../../components/shell/AppShell';
+import { RouteGate } from '../../components/shell/RouteGate';
+import { useBudget } from '../../providers/BudgetAppProvider';
+
+export default function DataSettingsPage() {
+  const app = useBudget(); const [file, setFile] = useState<File | null>(null);
+  const importFile = async () => { if (!file) return; const result = await app.importCsv(file); if (result) setFile(null); };
+  return <RouteGate gate="ready"><AppShell title="Configuración" subtitle="Herramientas menos frecuentes para administrar tu presupuesto."><div className="settings-grid"><aside className="settings-menu"><strong>Datos</strong><span>Importar y exportar</span></aside><section className="card settings-card" aria-label="Importar y exportar CSV"><p className="section-kicker">Datos</p><h2>Importar y exportar transacciones</h2><p className="muted">Usa CSV para hacer una copia portable de tus movimientos o cargar transacciones preparadas fuera de la aplicación.</p><div className="data-actions"><article><div className="data-icon">↓</div><div><h3>Exportar historial</h3><p>Descarga tus ingresos, gastos y transferencias efectivas en un archivo CSV.</p></div><button type="button" className="secondary" onClick={app.exportCsv} disabled={app.busy}>Descargar CSV</button></article><article><div className="data-icon">↑</div><div><h3>Importar transacciones</h3><p>El archivo debe usar el formato esperado. La importación es todo-o-nada: si hay errores, no se guardará ninguna fila.</p><input aria-label="Archivo CSV" type="file" accept=".csv,text/csv" onChange={e => setFile(e.target.files?.[0] ?? null)} /></div><button type="button" onClick={importFile} disabled={!file || app.busy}>Importar CSV</button></article></div>{app.csvDiagnostics.length > 0 && <div className="diagnostics"><h3>Revisa estas filas</h3><ul>{app.csvDiagnostics.map((diagnostic, index) => <li key={`${diagnostic.row}-${diagnostic.field}-${index}`}><strong>Fila {diagnostic.row || 'archivo'} · {diagnostic.field}</strong><span>{diagnostic.message}</span></li>)}</ul></div>}<details className="csv-help"><summary>Ver formato esperado</summary><code>date,type,account,amountMinor,category,payee,memo</code><p>Los importes del CSV se mantienen en unidades menores para preservar compatibilidad técnica. En la interfaz normal siempre verás importes decimales.</p></details></section></div></AppShell></RouteGate>;
+}

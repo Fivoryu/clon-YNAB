@@ -1,6 +1,10 @@
-# Delta for Account Transfers
+# Account Transfers Specification
 
-## MODIFIED Requirements
+## Purpose
+
+Define authorized same-budget transfers between supported accounts, including atomic paired effects, history projection, metadata, idempotency, and budgeting neutrality.
+
+## Requirements
 
 ### Requirement: Same-budget transfer command
 

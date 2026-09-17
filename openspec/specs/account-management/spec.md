@@ -1,6 +1,10 @@
-# Delta for Account Management
+# Account Management Specification
 
-## ADDED Requirements
+## Purpose
+
+Define the canonical multi-account projection, supported account lifecycle, authorization, concurrency, and compatibility behavior for manual cash and checking accounts.
+
+## Requirements
 
 ### Requirement: Canonical multi-account projection and compatibility alias
 

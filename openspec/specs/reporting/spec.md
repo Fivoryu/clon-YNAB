@@ -1,6 +1,10 @@
-# Delta for Reporting
+# Reporting Specification
 
-## ADDED Requirements
+## Purpose
+
+Define owner-authorized dashboard and monthly reporting projections that are reproducible from authoritative financial history and preserve account and transfer semantics.
+
+## Requirements
 
 ### Requirement: Reports expose account detail and preserve transfer neutrality
 

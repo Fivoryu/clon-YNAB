@@ -4,7 +4,7 @@
 
 Provide local authentication and server-managed access for a personal budgeting workspace.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Local account authentication
 

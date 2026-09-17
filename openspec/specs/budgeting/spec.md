@@ -1,6 +1,10 @@
-# Delta for Budgeting
+# Budgeting Specification
 
-## ADDED Requirements
+## Purpose
+
+Define authoritative budgeting calculations and mutation invariants for account balances, Ready to Assign, category allocation, activity, availability, rollover, and transfer neutrality.
+
+## Requirements
 
 ### Requirement: Per-account balances and aggregate conservation
 

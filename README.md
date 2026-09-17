@@ -24,6 +24,20 @@ Modular-monolith budgeting application inspired by YNAB concepts. The clone uses
 - Dashboard/monthly summary derived from authoritative history
 - Manual CSV import/export for `INCOME`, `SPENDING` and `TRANSFER`
 
+
+## UX actual
+
+La interfaz está organizada por tareas del usuario y usa rutas reales de Next.js:
+
+- `/login` y `/register`: acceso separado; el registro inicia sesión automáticamente.
+- `/setup`: onboarding progresivo de cuenta → categorías → revisión.
+- `/budget`: presupuesto mensual, dinero disponible y ajustes contextuales por categoría.
+- `/transactions`: historial cargado automáticamente y un único flujo para gasto, ingreso o transferencia.
+- `/accounts`: gestión de cuentas activas/archivadas.
+- `/settings/data`: importación/exportación CSV fuera del flujo cotidiano.
+
+Los importes se muestran como valores decimales legibles en la UI y se convierten internamente a `amountMinor` antes de llamar a la API. La API y PostgreSQL siguen siendo la autoridad financiera.
+
 ## CSV contract
 
 Canonical header:

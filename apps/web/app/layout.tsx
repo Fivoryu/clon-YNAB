@@ -1,11 +1,13 @@
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import './globals.css';
+import { BudgetAppProvider } from './providers/BudgetAppProvider';
 
 export const metadata: Metadata = {
-  title: 'Personal budget',
-  description: 'A bounded web budgeting workflow',
+  title: 'Mi Presupuesto',
+  description: 'Planifica, registra y entiende tu dinero con claridad.',
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  return <html lang="es"><body><BudgetAppProvider>{children}</BudgetAppProvider></body></html>;
 }
