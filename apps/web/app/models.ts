@@ -85,6 +85,55 @@ export type HistoryItem =
       createdAt: string;
     };
 
-export type HistoryResponse = { items: HistoryItem[]; version: number };
+export type HistoryResponse = { items: HistoryItem[]; version: number; nextCursor: string | null };
+export type AccountHistorySnapshot = {
+  accountId: string;
+  items: HistoryItem[];
+  version: number;
+  nextCursor: string | null;
+};
+export type AccountHistoryErrorKind = 'initial' | 'append' | 'stale-cursor';
+export type AccountHistoryState = AccountHistorySnapshot & {
+  loading: boolean;
+  appending: boolean;
+  error: string | null;
+  errorKind: AccountHistoryErrorKind | null;
+};
+
+export function appendAccountHistoryPage(
+  current: AccountHistorySnapshot,
+  accountId: string,
+  cursor: string,
+  page: HistoryResponse,
+): AccountHistorySnapshot | null {
+  if (current.accountId !== accountId || current.nextCursor !== cursor || current.version !== page.version) return null;
+
+  const seen = new Set(current.items.map(item => item.transactionId));
+  const newItems = page.items.filter(item => {
+    if (seen.has(item.transactionId)) return false;
+    seen.add(item.transactionId);
+    return true;
+  });
+  return { ...current, items: [...current.items, ...newItems], nextCursor: page.nextCursor };
+}
+
+export function isCurrentAccountHistoryPageRequest(
+  current: AccountHistorySnapshot,
+  accountId: string,
+  cursor: string,
+  requestId: number,
+  activeRequestId: number,
+): boolean {
+  return current.accountId === accountId && current.nextCursor === cursor && requestId === activeRequestId;
+}
+
+export function markAccountHistoryAppendError(
+  current: AccountHistoryState,
+  error: string,
+  stale: boolean,
+): AccountHistoryState {
+  return { ...current, appending: false, error, errorKind: stale ? 'stale-cursor' : 'append' };
+}
+
 export type HistoryKind = '' | 'INCOME' | 'SPENDING' | 'TRANSFER';
 export type HistoryMutation = { version: number; item?: HistoryItem; deleted?: boolean };

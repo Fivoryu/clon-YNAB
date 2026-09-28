@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Account,
+  AccountHistoryState,
   Budget,
   CommandResult,
   CsvDiagnostic,
@@ -13,6 +14,7 @@ import type {
   HistoryResponse,
   Summary,
 } from '../models';
+import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, markAccountHistoryAppendError } from '../models';
 
 type SessionStatus = 'checking' | 'guest' | 'setup' | 'ready';
 export type Notice = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -40,6 +42,8 @@ export function useBudgetApp() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [month, setMonthState] = useState(currentMonth);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [accountHistory, setAccountHistory] = useState<AccountHistoryState | null>(null);
+  const accountHistoryRequestId = useRef(0);
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({});
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
@@ -81,6 +85,67 @@ export function useBudgetApp() {
     return result;
   }, []);
 
+  const readAccountHistory = useCallback(async (accountId: string) => {
+    const budgetId = budget?.id;
+    if (!budgetId || budget?.setupStep !== 'COMPLETE') return null;
+    const requestId = ++accountHistoryRequestId.current;
+    const initial: AccountHistoryState = {
+      accountId, items: [], version: 0, nextCursor: null, loading: true, appending: false, error: null, errorKind: null,
+    };
+    setAccountHistory(initial);
+    const params = new URLSearchParams({ account: accountId });
+    try {
+      const result = await apiCall<HistoryResponse>(`/api/v1/budgets/${budgetId}/transactions?${params}`);
+      if (requestId !== accountHistoryRequestId.current) return null;
+      setAccountHistory({ ...initial, items: result.items, version: result.version, nextCursor: result.nextCursor, loading: false });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo cargar la actividad de esta cuenta.';
+      setAccountHistory(current => requestId === accountHistoryRequestId.current
+        ? { ...initial, loading: false, error: message, errorKind: 'initial' }
+        : current);
+      return null;
+    }
+  }, [budget?.id, budget?.setupStep]);
+
+  const loadMoreAccountHistory = useCallback(async (accountId: string) => {
+    const budgetId = budget?.id;
+    const current = accountHistory;
+    const cursor = current?.nextCursor;
+    if (!budgetId || !current || current.accountId !== accountId || current.version === null || !cursor || current.appending || current.loading) return null;
+    const requestId = accountHistoryRequestId.current;
+    setAccountHistory(snapshot => snapshot && isCurrentAccountHistoryPageRequest(snapshot, accountId, cursor, requestId, accountHistoryRequestId.current)
+      ? { ...snapshot, appending: true, error: null, errorKind: null }
+      : snapshot);
+    const params = new URLSearchParams({ account: accountId, cursor });
+    try {
+      const result = await apiCall<HistoryResponse>(`/api/v1/budgets/${budgetId}/transactions?${params}`);
+      if (requestId !== accountHistoryRequestId.current) return null;
+      setAccountHistory(snapshot => {
+        if (!snapshot || !isCurrentAccountHistoryPageRequest(snapshot, accountId, cursor, requestId, accountHistoryRequestId.current)) return snapshot;
+        const appended = appendAccountHistoryPage(snapshot, accountId, cursor, result);
+        if (!appended) return markAccountHistoryAppendError(snapshot, 'El historial cambió. Reinícialo para cargar la actividad actualizada.', true);
+        return { ...appended, loading: false, appending: false, error: null, errorKind: null };
+      });
+      return result;
+    } catch (error) {
+      if (requestId !== accountHistoryRequestId.current) return null;
+      const stale = error instanceof RequestError && error.status === 409;
+      const message = stale
+        ? 'El historial cambió. Reinícialo para cargar la actividad actualizada.'
+        : error instanceof Error ? error.message : 'No se pudo cargar más actividad.';
+      setAccountHistory(snapshot => snapshot && isCurrentAccountHistoryPageRequest(snapshot, accountId, cursor, requestId, accountHistoryRequestId.current)
+        ? markAccountHistoryAppendError(snapshot, message, stale)
+        : snapshot);
+      return null;
+    }
+  }, [accountHistory, budget?.id]);
+
+  const retryAccountHistory = useCallback((accountId: string) => (
+    accountHistory?.accountId === accountId && accountHistory.errorKind === 'append'
+      ? loadMoreAccountHistory(accountId)
+      : readAccountHistory(accountId)
+  ), [accountHistory, loadMoreAccountHistory, readAccountHistory]);
 
   const readPendingIncomes = useCallback(async (targetBudget: Budget) => {
     if (targetBudget.setupStep !== 'COMPLETE') return [];
@@ -151,7 +216,8 @@ export function useBudgetApp() {
     setBusy(true);
     try {
       await apiCall('/api/v1/auth/sign-out', { method: 'POST' });
-      setBudget(null); setSummary(null); setHistory(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
+      accountHistoryRequestId.current += 1;
+      setBudget(null); setSummary(null); setHistory(null); setAccountHistory(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
       setNotice({ kind: 'info', text: 'Sesión cerrada.' });
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo cerrar la sesión.' });
@@ -279,12 +345,13 @@ export function useBudgetApp() {
   const activeAccounts = useMemo(() => budget?.accounts.filter(account => !account.archived) ?? [], [budget]);
 
   return {
-    status, budget, summary, month, history, historyFilters, notice, setNotice, busy, csvDiagnostics,
+    status, budget, summary, month, history, accountHistory, historyFilters, notice, setNotice, busy, csvDiagnostics,
     activeCategories, activeAccounts, pendingIncomes, today: today(),
     authenticate, signOut, saveSetupAccount, saveSetupCategories, setMonth, refresh: sync,
     assign, unassign, move, recordIncome, recordSpending, recordTransfer, releaseIncome,
     createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory,
-    applyHistoryFilters, editTransaction, deleteTransaction, exportCsv, importCsv,
+    applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
+    editTransaction, deleteTransaction, exportCsv, importCsv,
   };
 }
 

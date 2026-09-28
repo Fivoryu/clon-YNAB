@@ -12,6 +12,7 @@ const setup = read('../app/setup/page.tsx');
 const budget = read('../app/budget/page.tsx');
 const transactions = read('../app/transactions/page.tsx');
 const accounts = read('../app/accounts/page.tsx');
+const accountDetail = (() => { try { return read('../app/accounts/[accountId]/page.tsx'); } catch { return ''; } })();
 const data = read('../app/settings/data/page.tsx');
 const money = read('../app/lib/money.ts');
 const web = [root, controller, shell, login, register, setup, budget, transactions, accounts, data, money].join('\n');
@@ -104,4 +105,44 @@ test('browser never becomes the financial authority', () => {
   assert.doesNotMatch(web, /calculateAccountBalance|calculateRta|parseTransactionCsv|FinancialEvent|TransferState/);
   assert.match(controller, /credentials:\s*['"]include['"]/);
   assert.match(controller, /crypto\.randomUUID\(\)/);
+});
+
+test('active and archived accounts link to directly addressable account activity', () => {
+  assert.match(accounts, /import Link from 'next\/link'/);
+  assert.match(accounts, /accounts\/\$\{account\.id\}/);
+  assert.match(accountDetail, /useParams|params/);
+  assert.match(accountDetail, /Volver a cuentas/);
+  assert.match(accountDetail, /archivada/i);
+  assert.equal((accounts.match(/account-detail-link/g) ?? []).length, 2);
+  assert.ok(accountDetail.includes('<Link className="account-back-link" href="/accounts"'));
+});
+
+test('account activity keeps the server balance and renders bounded history states', () => {
+  assert.match(accountDetail, /formatMoney\(account\.balanceMinor\)/);
+  assert.match(accountDetail, /Cargando actividad/);
+  assert.match(accountDetail, /No hay actividad/);
+  assert.match(accountDetail, /Has llegado al final de la actividad disponible/);
+  assert.match(accountDetail, /Cargar actividad anterior/);
+  assert.match(accountDetail, /role="alert"/);
+  assert.match(accountDetail, /Reintentar|Reiniciar historial/);
+  assert.match(controller, /loadMoreAccountHistory/);
+  assert.match(controller, /nextCursor/);
+  assert.match(accountDetail, /<button[^>]+type="button"[^>]*onClick/);
+  assert.match(accountDetail, /role="status" aria-live="polite"/);
+  assert.match(controller, /El historial cambió\. Reinícialo para cargar la actividad actualizada/);
+  assert.doesNotMatch(accountDetail, /item\.state/);
+});
+
+test('account activity presents each transfer with both endpoints and no unsupported actions', () => {
+  assert.match(accountDetail, /sourceAccount\.name/);
+  assert.match(accountDetail, /destinationAccount\.name/);
+  assert.doesNotMatch(accountDetail, /createAccount|recordIncome|recordSpending|recordTransfer|Archivar cuenta/);
+  assert.doesNotMatch(shell, /\/reports|Reportes/);
+});
+
+test('account activity layout collapses at the designed mobile breakpoint', () => {
+  const styles = read('../app/globals.css');
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?account-detail/);
+  assert.match(styles, /account-detail-summary[\s\S]*?flex-direction: column/);
+  assert.match(styles, /account-history-list \.transaction-row[\s\S]*?grid-template-columns: 34px minmax\(0, 1fr\)/);
 });
