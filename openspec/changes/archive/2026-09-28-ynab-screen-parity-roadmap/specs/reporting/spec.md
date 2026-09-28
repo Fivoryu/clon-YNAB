@@ -33,9 +33,9 @@ The basic monthly report MUST account visibly for supported transfers and workin
 
 The dashboard and canonical monthly summary MUST NOT present partial or misleading representations of splits, cards, reconciliation, targets, scheduled transactions, future income, refunds/reimbursements/returns, ordinary transaction edit/delete, cleared/uncleared workflows, shared or multiple budgets, or broader card/overspending formulas. The basic single-month report MAY account for supported transfers and working or pending transactions only within the explicit scope and reporting policy defined by the added requirements in this delta. That scoped reporting treatment MUST NOT imply a cleared/uncleared or reconciliation workflow, multi-month reporting, or broader support for an otherwise excluded capability. All other excluded concepts remain unavailable in reports.
 
-#### Scenario: A deferred reporting concept is requested
+#### Scenario: A deferred concept is requested
 
-- GIVEN a user requests a report dimension or control outside the basic single-month report's defined scope
+- GIVEN a user requests a report dimension or control for an excluded capability or outside the basic single-month report's defined scope
 - WHEN the system handles the request
 - THEN it MUST reject or clearly identify the capability as unavailable and MUST preserve supported report values
 - AND it MUST NOT imply support for multi-month trends, targets, scheduled transactions, reconciliation, cards, or another excluded concept
