@@ -120,12 +120,15 @@ export class FinancialStore {
   }
 
   async load(ownerId: string, budgetId: string): Promise<FinancialState> {
-    const budget = await this.client.budget.findFirst({
-      where: { id: budgetId, ownerId },
-      include: { accounts: { include: { openingBalances: { orderBy: { recordedAt: 'desc' }, take: 1 } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, categories: true },
-    });
-    if (!budget) throw new PersistenceError('NOT_FOUND', 'Resource not found');
-    return this.readState(this.client, budget, await this.client.commandReceipt.count({ where: { budgetId } }));
+    return this.client.$transaction(async tx => {
+      const budget = await tx.budget.findFirst({
+        where: { id: budgetId, ownerId },
+        include: { accounts: { include: { openingBalances: { orderBy: { recordedAt: 'desc' }, take: 1 } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, categories: true },
+      });
+      if (!budget) throw new PersistenceError('NOT_FOUND', 'Resource not found');
+      const version = await tx.commandReceipt.count({ where: { budgetId } });
+      return this.readState(tx, budget, version);
+    }, { isolationLevel: 'RepeatableRead' });
   }
 
   private async readState(tx: Pick<Prisma.TransactionClient, 'financialEvent' | 'commandReceipt' | 'transfer'>, budget: any, version: number): Promise<FinancialState> {

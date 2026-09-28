@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { applyAssignment, calculateAccountBalances, moveAssignment, monthForDate, oldestAccount, releaseIncome, unassign, type AccountState } from './planning/engine.ts';
-import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, filterHistoryItems, normalizeMetadata, normalizeMetadataPatch, parseTransactionDate, type HistoryFilter } from './planning/transaction-history.ts';
+import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, createHistoryCursor, isAccountOnlyHistoryFilter, normalizeMetadata, normalizeMetadataPatch, pageHistoryItems, parseHistoryCursor, parseTransactionDate, type HistoryFilter, type HistoryQuery } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
 import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
@@ -315,22 +315,35 @@ export class BudgetApp {
     }, undefined, true, false, payloadDigest);
   }
 
-  async listTransactions(token: string, budgetId: string, requestedFilter?: string | HistoryFilter, requestId?: string) {
+  async listTransactions(token: string, budgetId: string, requestedFilter?: string | HistoryQuery, requestId?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
-        const filter: HistoryFilter = typeof requestedFilter === 'string' ? { month: month(requestedFilter) } : (requestedFilter ?? {});
+    const request: HistoryQuery = typeof requestedFilter === 'string' ? { month: month(requestedFilter) } : (requestedFilter ?? {});
+    const { cursor, ...filter } = request;
+    let continuation: ReturnType<typeof parseHistoryCursor> | undefined;
+    if (cursor !== undefined) {
+      if (!isAccountOnlyHistoryFilter(filter)) throw new ApiError('VALIDATION_ERROR', 'cursor is supported only for account-ID history');
+      try { continuation = parseHistoryCursor(cursor, budgetId, filter); }
+      catch (error) { throw new ApiError('VALIDATION_ERROR', error instanceof Error ? error.message : 'cursor is invalid'); }
+    }
     try {
-          const state = await this.financialStore.load(user.id, budgetId);
-          if (filter.accountId !== undefined && !(state.accounts ?? []).some(account => account.id === filter.accountId)) throw new ApiError('NOT_FOUND', 'Resource not found');
-          if (filter.categoryId !== undefined && !state.categories.some(category => category.id === filter.categoryId)) throw new ApiError('NOT_FOUND', 'Resource not found');
-          const items = this.historyItems(state);
-          const searchable = items.map(item => {
-            const category = item.kind === 'SPENDING' ? item.category : undefined;
-            const accountNames = item.kind === 'TRANSFER' ? [item.sourceAccount.name, item.destinationAccount.name] : [state.accounts?.find(account => account.id === item.accountId)?.name].filter((name): name is string => Boolean(name));
-            return { ...item, categoryId: category?.id, categoryName: category?.name, accountNames, sourceAccountId: item.kind === 'TRANSFER' ? item.sourceAccount.id : undefined, destinationAccountId: item.kind === 'TRANSFER' ? item.destinationAccount.id : undefined };
-          });
-          const filtered = filterHistoryItems(searchable, filter).map(item => items.find(candidate => candidate.transactionId === item.transactionId)!);
-          return ok({ items: filtered, version: state.version }, requestId);
-        } catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
+      const state = await this.financialStore.load(user.id, budgetId);
+      if (continuation && continuation.version !== state.version) throw new ApiError('CONFLICT', 'History changed; restart from the first page');
+      if (filter.accountId !== undefined && !(state.accounts ?? []).some(account => account.id === filter.accountId)) throw new ApiError('NOT_FOUND', 'Resource not found');
+      if (filter.categoryId !== undefined && !state.categories.some(category => category.id === filter.categoryId)) throw new ApiError('NOT_FOUND', 'Resource not found');
+      const items = this.historyItems(state);
+      const searchable = items.map(item => {
+        const category = item.kind === 'SPENDING' ? item.category : undefined;
+        const accountNames = item.kind === 'TRANSFER' ? [item.sourceAccount.name, item.destinationAccount.name] : [state.accounts?.find(account => account.id === item.accountId)?.name].filter((name): name is string => Boolean(name));
+        return { ...item, categoryId: category?.id, categoryName: category?.name, accountNames, sourceAccountId: item.kind === 'TRANSFER' ? item.sourceAccount.id : undefined, destinationAccountId: item.kind === 'TRANSFER' ? item.destinationAccount.id : undefined };
+      });
+      const page = pageHistoryItems(searchable, filter, continuation?.anchor);
+      const filtered = page.items.map(item => items.find(candidate => candidate.transactionId === item.transactionId)!);
+      const last = page.items.at(-1);
+      const nextCursor = page.hasMore && last && isAccountOnlyHistoryFilter(filter)
+        ? createHistoryCursor(budgetId, filter, state.version, { date: last.date, createdAt: last.createdAt ?? '', transactionId: last.transactionId })
+        : null;
+      return ok({ items: filtered, version: state.version, nextCursor }, requestId);
+    } catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
   }
   async getTransaction(token: string, budgetId: string, transactionId: string, requestId?: string) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId);

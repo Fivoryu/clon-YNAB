@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { ApiError, BudgetApp, errorEnvelope } from './app.ts';
-import { parseTransactionDate, type HistoryFilter } from './planning/transaction-history.ts';
+import { parseTransactionDate, type HistoryQuery } from './planning/transaction-history.ts';
 import { CSV_MAX_BYTES } from './planning/csv.ts';
 
 const json = (res: any, status: number, body: unknown, cookie?: string) => { res.writeHead(status, { 'content-type': 'application/json', ...(cookie ? { 'set-cookie': cookie } : {}) }); res.end(JSON.stringify(body)); };
@@ -29,15 +29,16 @@ const requireCsvContentType = (req: any) => {
   if (Array.isArray(value) || typeof value !== 'string' || !/^text\/csv(?:\s*;\s*charset\s*=\s*utf-8\s*)?$/i.test(value)) throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be text/csv with optional charset=utf-8');
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const parseHistoryQuery = (url: URL): HistoryFilter => {
+export const parseHistoryQuery = (url: URL): HistoryQuery => {
   if (new TextEncoder().encode(url.search.slice(1)).length > 4096) throw new ApiError('VALIDATION_ERROR', 'history query is too long');
-  const allowed = new Set(['month', 'account', 'kind', 'category', 'from', 'to', 'q']); const seen = new Set<string>(); const filter: HistoryFilter = {};
+  const allowed = new Set(['month', 'account', 'kind', 'category', 'from', 'to', 'q', 'cursor']); const seen = new Set<string>(); const filter: HistoryQuery = {};
   for (const [key, value] of url.searchParams.entries()) {
     if (!allowed.has(key) || seen.has(key)) throw new ApiError('VALIDATION_ERROR', 'history query contains an unknown or repeated parameter');
     seen.add(key);
     if (key === 'month') { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', 'month must be YYYY-MM'); filter.month = value; }
     else if (key === 'from' || key === 'to') { try { parseTransactionDate(value); } catch { throw new ApiError('VALIDATION_ERROR', `${key} must be YYYY-MM-DD`); } filter[key] = value; }
-    else if (key === 'kind') { if (!['INCOME', 'SPENDING', 'TRANSFER'].includes(value)) throw new ApiError('VALIDATION_ERROR', 'kind is invalid'); filter.kind = value as HistoryFilter['kind']; }
+    else if (key === 'kind') { if (!['INCOME', 'SPENDING', 'TRANSFER'].includes(value)) throw new ApiError('VALIDATION_ERROR', 'kind is invalid'); filter.kind = value as HistoryQuery['kind']; }
+    else if (key === 'cursor') { if (!value || value.length > 2048) throw new ApiError('VALIDATION_ERROR', 'cursor is invalid or too long'); filter.cursor = value; }
     else if (key === 'account' || key === 'category') { if (!uuid.test(value)) throw new ApiError('VALIDATION_ERROR', `${key} is invalid`); filter[key === 'account' ? 'accountId' : 'categoryId'] = value.toLowerCase(); }
     else { const trimmed = value.replace(/^\p{White_Space}+/u, '').replace(/\p{White_Space}+$/u, ''); if ([...trimmed].length > 200) throw new ApiError('VALIDATION_ERROR', 'q must be at most 200 code points'); if (trimmed) filter.q = trimmed; }
   }

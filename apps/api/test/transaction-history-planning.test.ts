@@ -9,6 +9,9 @@ import {
   projectEffectiveHistory,
   sameTransactionMonth,
   filterHistoryItems,
+  pageHistoryItems,
+  createHistoryCursor,
+  parseHistoryCursor,
   normalizeMetadata,
   normalizeMetadataPatch,
 } from '../src/planning/transaction-history.ts';
@@ -81,6 +84,47 @@ test('metadata patches distinguish omission from clear and replacement propagati
   const metadataOnly = buildReplacement(current, { memo: 'New' });
   assert.deepEqual({ amountMinor: metadataOnly.amountMinor, accountId: metadataOnly.accountId, categoryId: metadataOnly.categoryId, businessDate: metadataOnly.businessDate, month: metadataOnly.month }, { amountMinor: current.amountMinor, accountId: current.accountId, categoryId: current.categoryId, businessDate: current.businessDate, month: current.month });
   assert.equal(metadataOnly.memo, 'New');
+});
+
+test('account history pages preserve the 500 ceiling and exclusive deterministic tie ordering', () => {
+  const rows = Array.from({ length: 1103 }, (_, index) => ({
+    transactionId: `item-${String(index).padStart(4, '0')}`,
+    kind: 'INCOME' as const,
+    date: '2026-02-01',
+    createdAt: '2026-02-01T00:00:00.000Z',
+    accountId: 'account-1',
+    payee: null,
+    memo: null,
+  }));
+  for (const count of [0, 500, 501, rows.length]) {
+    const source = rows.slice(0, count);
+    let page = pageHistoryItems(source, { accountId: 'account-1' });
+    assert.ok(page.items.length <= 500);
+    assert.equal(page.items.length, Math.min(count, 500));
+    assert.equal(page.hasMore, count > 500);
+    const collected = [...page.items];
+    while (page.hasMore) {
+      const last = page.items.at(-1)!;
+      page = pageHistoryItems(source, { accountId: 'account-1' }, { date: last.date, createdAt: last.createdAt ?? '', transactionId: last.transactionId });
+      assert.ok(page.items.length <= 500);
+      collected.push(...page.items);
+    }
+    assert.equal(collected.length, count);
+    assert.equal(new Set(collected.map(item => item.transactionId)).size, count);
+    assert.deepEqual(collected.map(item => item.transactionId), source.map(item => item.transactionId).reverse());
+  }
+});
+
+test('history cursors bind budget, supported filters, version, and a validated exclusive anchor', () => {
+  const filter = { accountId: 'account-1' };
+  const anchor = { date: '2026-02-01', createdAt: '2026-02-01T00:00:00.000Z', transactionId: 'item-1' };
+  const cursor = createHistoryCursor('budget-1', filter, 42, anchor);
+  assert.deepEqual(parseHistoryCursor(cursor, 'budget-1', filter), { version: 42, anchor });
+  assert.throws(() => parseHistoryCursor('not-a-cursor', 'budget-1', filter), /cursor/i);
+  assert.throws(() => parseHistoryCursor(cursor, 'other-budget', filter), /cursor/i);
+  assert.throws(() => parseHistoryCursor(cursor, 'budget-1', { accountId: 'account-2' }), /cursor/i);
+  assert.throws(() => parseHistoryCursor(cursor, 'budget-1', { accountId: 'account-1', q: 'mutable name' }), /cursor/i);
+  assert.throws(() => parseHistoryCursor('a'.repeat(2049), 'budget-1', filter), /cursor/i);
 });
 
 test('filters effective projections with AND semantics, literal search, inclusive dates, transfer sides, ordering, and cap', () => {

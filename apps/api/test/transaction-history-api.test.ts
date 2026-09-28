@@ -40,6 +40,98 @@ test('history list/read is owner-scoped, ordered by date and filterable by month
   assert.equal((await read.json() as any).data.item.transactionId, item.transactionId);
 });
 
+test('account history API continues exclusive 500-item pages and rejects cursors outside their snapshot/filter', async () => {
+  const { app, token, budget } = prepare();
+  const accountId = budget.account!.id;
+  const otherAccountId = '123e4567-e89b-42d3-a456-426614174000';
+  let version = 91;
+  const state: any = {
+    id: budget.id, version, setupStep: 'COMPLETE', timezone: 'UTC',
+    account: budget.account, accounts: [...budget.accounts, { ...budget.account, id: otherAccountId, name: 'Other', balanceMinor: 0 }],
+    categories: budget.categories, transfers: [],
+    events: Array.from({ length: 501 }, (_, index) => ({
+      id: `transaction-${String(index).padStart(3, '0')}`, transactionId: `transaction-${String(index).padStart(3, '0')}`,
+      kind: 'INCOME', accountId, amountMinor: 1, businessDate: '2026-02-01', month: '2026-02',
+      status: 'POSTED', reconciled: false, createdAt: '2026-02-01T00:00:00.000Z',
+    })),
+  };
+  (app as any).financialStore = { load: async () => ({ ...state, version }) };
+
+  const firstResponse = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}`);
+  const first = (await firstResponse.json() as any).data;
+  assert.equal(firstResponse.status, 200);
+  assert.equal(first.items.length, 500);
+  assert.equal(first.version, 91);
+  assert.ok(first.nextCursor);
+  const secondResponse = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}&cursor=${encodeURIComponent(first.nextCursor)}`);
+  const second = (await secondResponse.json() as any).data;
+  assert.equal(second.items.length, 1);
+  assert.equal(second.nextCursor, null);
+  const ids = [...first.items, ...second.items].map((item: any) => item.transactionId);
+  assert.equal(new Set(ids).size, 501);
+  assert.deepEqual([ids[0], ids.at(-1)], ['transaction-500', 'transaction-000']);
+
+  const allEvents = state.events;
+  state.events = [];
+  const empty = (await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}`)).json();
+  assert.equal((await empty as any).data.items.length, 0);
+  assert.equal((await empty as any).data.nextCursor, null);
+  state.events = allEvents.slice(0, 500);
+  const exactlyFull = (await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}`)).json();
+  assert.equal((await exactlyFull as any).data.items.length, 500);
+  assert.equal((await exactlyFull as any).data.nextCursor, null);
+  state.events = allEvents;
+
+  const tooLarge = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}&cursor=${'a'.repeat(2049)}`);
+  assert.equal(tooLarge.status, 400);
+  for (const query of [
+    '?cursor=not-a-cursor',
+    `?account=${otherAccountId}&cursor=${encodeURIComponent(first.nextCursor)}`,
+    `?account=${accountId}&kind=INCOME&cursor=${encodeURIComponent(first.nextCursor)}`,
+    `?account=${accountId}&q=Cash&cursor=${encodeURIComponent(first.nextCursor)}`,
+  ]) {
+    const response = await http(app, token, `/api/v1/budgets/${budget.id}/transactions${query}`);
+    assert.equal(response.status, 400, query);
+    assert.equal((await response.json() as any).error.code, 'VALIDATION_ERROR');
+  }
+  const { app: otherApp, token: otherToken, budget: otherBudget } = prepare();
+  const crossBudget = await http(otherApp, otherToken, `/api/v1/budgets/${otherBudget.id}/transactions?account=${accountId}&cursor=${encodeURIComponent(first.nextCursor)}`);
+  assert.equal(crossBudget.status, 400);
+
+  version++;
+  state.events.push({ id: 'new-transaction', transactionId: 'new-transaction', kind: 'INCOME', accountId, amountMinor: 2, businessDate: '2026-03-01', month: '2026-03', status: 'POSTED', reconciled: false, createdAt: '2026-03-01T00:00:00.000Z' });
+  const stale = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}&cursor=${encodeURIComponent(first.nextCursor)}`);
+  assert.equal(stale.status, 409);
+  assert.match((await stale.json() as any).error.message, /restart/i);
+  const restarted = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}`);
+  const restartedData = (await restarted.json() as any).data;
+  assert.equal(restartedData.version, 92);
+  assert.equal(restartedData.items[0].transactionId, 'new-transaction');
+
+  const nameFiltered = await http(app, token, `/api/v1/budgets/${budget.id}/transactions?account=${accountId}&q=Cash`);
+  assert.equal((await nameFiltered.json() as any).data.nextCursor, null);
+});
+
+test('account-filtered transfers remain one item from either ledger side and effective replacements/deletions stay canonical', async () => {
+  const { app, token, budget } = prepare();
+  const destination = (await app.createAccount(token, budget.id, { name: 'History destination', kind: 'checking' }, undefined, options('cursor-account', 0))).data.account;
+  const transfer = await app.recordTransfer(token, budget.id, { sourceAccountId: budget.account!.id, destinationAccountId: destination.id, amountMinor: 5, date: '2026-02-03' }, undefined, options('cursor-transfer', 1));
+  const sourceHistory = await app.listTransactions(token, budget.id, { accountId: budget.account!.id, kind: 'TRANSFER' });
+  const destinationHistory = await app.listTransactions(token, budget.id, { accountId: destination.id, kind: 'TRANSFER' });
+  assert.deepEqual(sourceHistory.data.items.map(item => item.transactionId), [transfer.data.transferId]);
+  assert.deepEqual(destinationHistory.data.items.map(item => item.transactionId), [transfer.data.transferId]);
+  assert.equal(sourceHistory.data.nextCursor, null);
+
+  const replaced = (await app.recordIncome(token, budget.id, { amountMinor: 10, date: '2026-02-04' }, undefined, options('cursor-replaced'))).data;
+  const deleted = (await app.recordIncome(token, budget.id, { amountMinor: 20, date: '2026-02-05' }, undefined, options('cursor-deleted'))).data;
+  await app.editTransaction(token, budget.id, replaced.id, { amountMinor: 11 }, undefined, options('cursor-replacement', 4));
+  await app.deleteTransaction(token, budget.id, deleted.id, { confirmed: true }, undefined, options('cursor-tombstone', 5));
+  const canonical = await app.listTransactions(token, budget.id, { accountId: budget.account!.id });
+  assert.equal(canonical.data.items.filter(item => item.transactionId === replaced.id).length, 1);
+  assert.equal(canonical.data.items.find(item => item.transactionId === replaced.id)?.amountMinor, 11);
+  assert.equal(canonical.data.items.some(item => item.transactionId === deleted.id), false);
+});
+
 test('edit requires mutation headers, validates fields, returns server history, and replays', async () => {
   const { app, token, budget } = prepare();
   const income = (await app.recordIncome(token, budget.id, { amountMinor: 50, date: '2026-02-01' }, undefined, options('edit-seed'))).data;

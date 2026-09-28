@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { monthForDate } from './engine.ts';
 
 export type TransactionKind = 'INCOME' | 'SPENDING';
@@ -91,7 +91,36 @@ export const buildDeleteTombstone = (event: TransactionEvent, date = event.busin
 export const projectEffectiveHistory = <T extends TransactionEvent>(events: T[], appended: T) => foldEffectiveHistory([...events, appended]);
 
 export type HistoryFilter = { month?: string; accountId?: string; kind?: 'INCOME' | 'SPENDING' | 'TRANSFER'; categoryId?: string; from?: string; to?: string; q?: string };
+export type HistoryQuery = HistoryFilter & { cursor?: string };
 export type HistoryFilterItem = { transactionId: string; kind: 'INCOME' | 'SPENDING' | 'TRANSFER'; date: string; createdAt?: string; accountId?: string; categoryId?: string; categoryName?: string; accountNames?: string[]; sourceAccountId?: string; destinationAccountId?: string; payee: string | null; memo: string | null };
+export type HistoryAnchor = { date: string; createdAt: string; transactionId: string };
+export const isAccountOnlyHistoryFilter = (filter: HistoryFilter) => filter.accountId !== undefined && Object.keys(filter).length === 1;
+const historyFilterDigest = (filter: HistoryFilter) => createHash('sha256').update(JSON.stringify({ accountId: filter.accountId?.toLowerCase() })).digest('hex');
+const cursorError = () => new Error('cursor is invalid or does not match the requested history');
+const isRecord = (value: unknown): value is Record<string, any> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const hasExactKeys = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).sort().join(',') === keys.join(',');
+const parseCursorAnchor = (value: unknown): HistoryAnchor => {
+  if (!isRecord(value) || !hasExactKeys(value, ['createdAt', 'date', 'transactionId'])) throw cursorError();
+  const { date, createdAt, transactionId } = value;
+  if (typeof date !== 'string' || typeof createdAt !== 'string' || createdAt.length > 64 || (createdAt !== '' && !Number.isFinite(Date.parse(createdAt))) || typeof transactionId !== 'string' || !transactionId.trim() || transactionId.length > 128) throw cursorError();
+  parseTransactionDate(date);
+  return { date, createdAt, transactionId };
+};
+export const createHistoryCursor = (budgetId: string, filter: HistoryFilter, historyVersion: number, anchor: HistoryAnchor) => {
+  if (!isAccountOnlyHistoryFilter(filter) || !Number.isSafeInteger(historyVersion) || historyVersion < 0) throw cursorError();
+  return Buffer.from(JSON.stringify({ schemaVersion: 1, budgetId, filtersDigest: historyFilterDigest(filter), historyVersion, anchor })).toString('base64url');
+};
+export const parseHistoryCursor = (cursor: string, budgetId: string, filter: HistoryFilter): { version: number; anchor: HistoryAnchor } => {
+  if (!isAccountOnlyHistoryFilter(filter) || typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw cursorError();
+  try {
+    const bytes = Buffer.from(cursor, 'base64url');
+    if (bytes.toString('base64url') !== cursor) throw cursorError();
+    const value: unknown = JSON.parse(bytes.toString('utf8'));
+    if (!isRecord(value) || !hasExactKeys(value, ['anchor', 'budgetId', 'filtersDigest', 'historyVersion', 'schemaVersion'])) throw cursorError();
+    if (value.schemaVersion !== 1 || value.budgetId !== budgetId || value.filtersDigest !== historyFilterDigest(filter) || !Number.isSafeInteger(value.historyVersion) || value.historyVersion < 0) throw cursorError();
+    return { version: value.historyVersion, anchor: parseCursorAnchor(value.anchor) };
+  } catch { throw cursorError(); }
+};
 export const searchFold = (value: string) => value.toLowerCase();
 const normalizedQuery = (value: string | undefined) => {
   if (value === undefined) return undefined;
@@ -112,12 +141,19 @@ const matchesHistoryFilter = (item: HistoryFilterItem, filter: HistoryFilter, qu
   }
   return true;
 };
-export const filterHistoryItems = <T extends HistoryFilterItem>(items: T[], filter: HistoryFilter): T[] => {
+const compareHistoryOrder = (a: Pick<HistoryFilterItem, 'date' | 'createdAt' | 'transactionId'>, b: Pick<HistoryFilterItem, 'date' | 'createdAt' | 'transactionId'>) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.transactionId.localeCompare(a.transactionId);
+const matchingHistoryItems = <T extends HistoryFilterItem>(items: T[], filter: HistoryFilter) => {
   if (filter.month !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(filter.month)) throw new Error('month must be YYYY-MM');
   if (filter.from !== undefined) parseTransactionDate(filter.from);
   if (filter.to !== undefined) parseTransactionDate(filter.to);
   if (filter.from !== undefined && filter.to !== undefined && filter.from > filter.to) throw new Error('from must not be later than to');
   const query = normalizedQuery(filter.q);
-  const filtered = items.filter(item => matchesHistoryFilter(item, filter, query));
-  return [...filtered].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.transactionId.localeCompare(a.transactionId)).slice(0, 500);
+  return [...items.filter(item => matchesHistoryFilter(item, filter, query))].sort(compareHistoryOrder);
+};
+export const filterHistoryItems = <T extends HistoryFilterItem>(items: T[], filter: HistoryFilter): T[] => matchingHistoryItems(items, filter).slice(0, 500);
+export const pageHistoryItems = <T extends HistoryFilterItem>(items: T[], filter: HistoryFilter, anchor?: HistoryAnchor): { items: T[]; hasMore: boolean } => {
+  const ordered = matchingHistoryItems(items, filter);
+  const afterAnchor = anchor ? ordered.filter(item => compareHistoryOrder(item, anchor) > 0) : ordered;
+  const bounded = afterAnchor.slice(0, 501);
+  return { items: bounded.slice(0, 500), hasMore: bounded.length > 500 };
 };
