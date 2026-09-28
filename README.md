@@ -58,23 +58,16 @@ POST /api/v1/budgets/{budgetId}/transactions/import
 ## Local setup
 
 ```bash
-cp .env.example .env
 npm ci
-npm run db:generate
+DATABASE_URL=postgresql://ynab:ynab_local@localhost:5434/ynab_dev npm run db:generate
 docker compose up -d postgres
-npm run db:migrate
+DATABASE_URL=postgresql://ynab:ynab_local@localhost:5434/ynab_dev npm run db:migrate
 ```
 
-Export `DATABASE_URL` when your shell does not automatically load `.env`:
+`DATABASE_URL` is supplied only to processes that need database access; no `.env` file is required. Run the API and web app in separate terminals:
 
 ```bash
-export DATABASE_URL=postgresql://ynab:ynab_local@localhost:5432/ynab_dev
-```
-
-Run the API and web app in separate terminals:
-
-```bash
-npm run dev:api
+DATABASE_URL=postgresql://ynab:ynab_local@localhost:5434/ynab_dev npm run dev:api
 npm run dev:web
 ```
 
@@ -116,7 +109,7 @@ PostgreSQL-backed tests are designed to use `DATABASE_URL`. Tests that explicitl
 
 ## Database
 
-The local Compose configuration exposes PostgreSQL at `localhost:5432` with database/user/password `ynab_dev` / `ynab` / `ynab_local` for development only. Prisma schema and migrations live under `apps/api/prisma`.
+The local Compose configuration exposes PostgreSQL at `localhost:5434` (container port `5432`) with database/user/password `ynab_dev` / `ynab` / `ynab_local` for development only. Prisma schema and migrations live under `apps/api/prisma`.
 
 ## Product boundaries
 

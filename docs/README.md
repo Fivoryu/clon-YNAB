@@ -15,16 +15,17 @@ Priority and delivery status are separate dimensions. **P0**, **P1**, and **P2**
 ## Reading order
 
 1. [YNAB domain research](research/ynab-domain.md)
-2. [Budget engine research](research/budget-engine.md)
-3. [Domain model](architecture/domain-model.md)
-4. [System architecture](architecture/system-overview.md)
-5. [Technology stack](architecture/stack.md)
-6. [MVP scope](product/mvp-scope.md)
-7. [Actors and use cases](product/actors-and-use-cases.md)
-8. [Functional requirements](product/functional-requirements.md)
-9. [Non-functional requirements](product/non-functional-requirements.md)
-10. [ADR-001: modular monolith](decisions/ADR-001-modular-monolith.md)
-11. [ADR-002: financial history](decisions/ADR-002-financial-history.md)
+2. [YNAB screen and capability parity research](research/ynab-screen-parity.md)
+3. [Budget engine research](research/budget-engine.md)
+4. [Domain model](architecture/domain-model.md)
+5. [System architecture](architecture/system-overview.md)
+6. [Technology stack](architecture/stack.md)
+7. [MVP scope](product/mvp-scope.md)
+8. [Actors and use cases](product/actors-and-use-cases.md)
+9. [Functional requirements](product/functional-requirements.md)
+10. [Non-functional requirements](product/non-functional-requirements.md)
+11. [ADR-001: modular monolith](decisions/ADR-001-modular-monolith.md)
+12. [ADR-002: financial history](decisions/ADR-002-financial-history.md)
 
 ## Historical implementation entry gate
 
