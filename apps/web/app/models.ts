@@ -137,3 +137,53 @@ export function markAccountHistoryAppendError(
 
 export type HistoryKind = '' | 'INCOME' | 'SPENDING' | 'TRANSFER';
 export type HistoryMutation = { version: number; item?: HistoryItem; deleted?: boolean };
+
+export type MonthlyReportAccountReference = { id: string; name: string; kind: Account['kind']; archived: boolean };
+export type MonthlyReportCategorySpending = { id: string; name: string; archived: boolean; spendingMinor: number };
+export type MonthlyReportTransferItem = {
+  transferId: string;
+  sourceAccount: MonthlyReportAccountReference;
+  destinationAccount: MonthlyReportAccountReference;
+  date: string;
+  amountMinor: number;
+};
+export type MonthlyReport = {
+  month: string;
+  policy: { id: string; month: string };
+  incomeMinor: number;
+  expenseMinor: number;
+  categories: MonthlyReportCategorySpending[];
+  transfers: { treatment: 'OUTSIDE_INCOME_EXPENSE_TOTALS'; totalMinor: number; items: MonthlyReportTransferItem[] };
+  provisional: { treatment: 'INCLUDED_PROVISIONAL'; count: number; incomeMinor: number; expenseMinor: number };
+  incomeRelease: { treatment: 'PENDING_RELEASE'; receivedMinor: number; releasedMinor: number; pendingMinor: number };
+  version: number;
+};
+export type MonthlyReportUnavailable = {
+  month: string;
+  policy: { id: null; month: string };
+  unavailable: { code: 'REPORT_POLICY_UNRESOLVED'; treatment: 'NO_TOTALS_RETURNED' };
+};
+export type MonthlyReportProjection = MonthlyReport | MonthlyReportUnavailable;
+export type MonthlyReportErrorKind = 'initial' | 'invalid-month';
+export type MonthlyReportState = {
+  month: string;
+  projection: MonthlyReportProjection | null;
+  loading: boolean;
+  error: string | null;
+  errorKind: MonthlyReportErrorKind | null;
+};
+
+const reportMonthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
+const reportMonthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+export function isReportMonth(value: string): boolean { return reportMonthPattern.test(value); }
+
+export function reportMonthLabel(month: string): string {
+  if (!isReportMonth(month)) return month;
+  const [year, index] = month.split('-');
+  return `${reportMonthNames[Number(index) - 1]} de ${year}`;
+}
+
+export function isMonthlyReportUnavailable(projection: MonthlyReportProjection): projection is MonthlyReportUnavailable {
+  return 'unavailable' in projection;
+}

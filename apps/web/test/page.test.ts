@@ -18,7 +18,7 @@ const money = read('../app/lib/money.ts');
 const web = [root, controller, shell, login, register, setup, budget, transactions, accounts, data, money].join('\n');
 const nextConfig = read('../../../next.config.mjs');
 
-test('navigation is route-based and centered on four user tasks', () => {
+test('navigation is route-based and centered on the core user tasks', () => {
   for (const route of ['/budget', '/transactions', '/accounts', '/settings/data']) assert.match(shell, new RegExp(route.replaceAll('/', '\\/')));
   for (const label of ['Presupuesto', 'Transacciones', 'Cuentas', 'Configuración']) assert.match(shell, new RegExp(label));
   assert.doesNotMatch(shell, /label: 'Overview'|label: 'Plan'|label: 'Activity'|label: 'History'|label: 'Data'/);
@@ -137,7 +137,7 @@ test('account activity presents each transfer with both endpoints and no unsuppo
   assert.match(accountDetail, /sourceAccount\.name/);
   assert.match(accountDetail, /destinationAccount\.name/);
   assert.doesNotMatch(accountDetail, /createAccount|recordIncome|recordSpending|recordTransfer|Archivar cuenta/);
-  assert.doesNotMatch(shell, /\/reports|Reportes/);
+  assert.doesNotMatch(accountDetail, /\/reports/);
 });
 
 test('account activity layout collapses at the designed mobile breakpoint', () => {

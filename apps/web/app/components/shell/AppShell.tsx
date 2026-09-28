@@ -10,6 +10,7 @@ const nav = [
   { href: '/budget', label: 'Presupuesto', icon: '◎' },
   { href: '/transactions', label: 'Transacciones', icon: '↕' },
   { href: '/accounts', label: 'Cuentas', icon: '▣' },
+  { href: '/reports', label: 'Reportes', icon: '▤' },
   { href: '/settings/data', label: 'Configuración', icon: '⚙' },
 ];
 
@@ -31,7 +32,7 @@ export function AppShell({ title, subtitle, action, children }: { title: string;
         <header className="page-header"><div><p className="eyebrow">Mi presupuesto</p><h1>{title}</h1>{subtitle && <p className="lead">{subtitle}</p>}</div>{action && <div className="header-action">{action}</div>}</header>
         <main className="page-content">{children}</main>
       </div>
-      <nav className="mobile-nav" aria-label="Navegación móvil">{nav.slice(0, 3).map(item => <Link key={item.href} href={item.href} className={pathname.startsWith(item.href) ? 'active' : ''}><span>{item.icon}</span><small>{item.label}</small></Link>)}<Link href="/settings/data" className={pathname.startsWith('/settings') ? 'active' : ''}><span>⚙</span><small>Más</small></Link></nav>
+      <nav className="mobile-nav" aria-label="Navegación móvil">{nav.map(item => <Link key={item.href} href={item.href} className={pathname.startsWith(item.href) ? 'active' : ''}><span>{item.icon}</span><small>{item.label}</small></Link>)}</nav>
       <ToastRegion />
     </div>
   );

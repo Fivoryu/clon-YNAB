@@ -12,9 +12,11 @@ import type {
   HistoryKind,
   HistoryMutation,
   HistoryResponse,
+  MonthlyReportProjection,
+  MonthlyReportState,
   Summary,
 } from '../models';
-import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, markAccountHistoryAppendError } from '../models';
+import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, isReportMonth, markAccountHistoryAppendError } from '../models';
 
 type SessionStatus = 'checking' | 'guest' | 'setup' | 'ready';
 export type Notice = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -44,6 +46,8 @@ export function useBudgetApp() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [accountHistory, setAccountHistory] = useState<AccountHistoryState | null>(null);
   const accountHistoryRequestId = useRef(0);
+  const [report, setReport] = useState<MonthlyReportState | null>(null);
+  const reportRequestId = useRef(0);
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({});
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
@@ -147,6 +151,33 @@ export function useBudgetApp() {
       : readAccountHistory(accountId)
   ), [accountHistory, loadMoreAccountHistory, readAccountHistory]);
 
+  const readMonthlyReport = useCallback(async (month: string) => {
+    const budgetId = budget?.id;
+    if (!budgetId || budget?.setupStep !== 'COMPLETE') return null;
+    const requestedMonth = month.trim();
+    const requestId = ++reportRequestId.current;
+    if (!isReportMonth(requestedMonth)) {
+      const invalid: MonthlyReportState = { month: requestedMonth, projection: null, loading: false, error: 'Elige un mes válido en formato AAAA-MM.', errorKind: 'invalid-month' };
+      setReport(invalid);
+      return invalid;
+    }
+    const loading: MonthlyReportState = { month: requestedMonth, projection: null, loading: true, error: null, errorKind: null };
+    setReport(loading);
+    try {
+      const projection = await apiCall<MonthlyReportProjection>(`/api/v1/budgets/${budgetId}/reports/monthly?month=${encodeURIComponent(requestedMonth)}`);
+      if (requestId !== reportRequestId.current) return null;
+      const loaded: MonthlyReportState = { month: requestedMonth, projection, loading: false, error: null, errorKind: null };
+      setReport(loaded);
+      return loaded;
+    } catch (error) {
+      if (requestId !== reportRequestId.current) return null;
+      const message = error instanceof Error ? error.message : 'No se pudo cargar el reporte del mes.';
+      const failed: MonthlyReportState = { month: requestedMonth, projection: null, loading: false, error: message, errorKind: 'initial' };
+      setReport(failed);
+      return failed;
+    }
+  }, [budget?.id, budget?.setupStep]);
+
   const readPendingIncomes = useCallback(async (targetBudget: Budget) => {
     if (targetBudget.setupStep !== 'COMPLETE') return [];
     const result = await apiCall<HistoryResponse>(`/api/v1/budgets/${targetBudget.id}/transactions?kind=INCOME`);
@@ -216,8 +247,8 @@ export function useBudgetApp() {
     setBusy(true);
     try {
       await apiCall('/api/v1/auth/sign-out', { method: 'POST' });
-      accountHistoryRequestId.current += 1;
-      setBudget(null); setSummary(null); setHistory(null); setAccountHistory(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
+      accountHistoryRequestId.current += 1; reportRequestId.current += 1;
+      setBudget(null); setSummary(null); setHistory(null); setAccountHistory(null); setReport(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
       setNotice({ kind: 'info', text: 'Sesión cerrada.' });
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo cerrar la sesión.' });
@@ -345,12 +376,13 @@ export function useBudgetApp() {
   const activeAccounts = useMemo(() => budget?.accounts.filter(account => !account.archived) ?? [], [budget]);
 
   return {
-    status, budget, summary, month, history, accountHistory, historyFilters, notice, setNotice, busy, csvDiagnostics,
+    status, budget, summary, month, history, accountHistory, report, historyFilters, notice, setNotice, busy, csvDiagnostics,
     activeCategories, activeAccounts, pendingIncomes, today: today(),
     authenticate, signOut, saveSetupAccount, saveSetupCategories, setMonth, refresh: sync,
     assign, unassign, move, recordIncome, recordSpending, recordTransfer, releaseIncome,
     createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory,
     applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
+    readMonthlyReport,
     editTransaction, deleteTransaction, exportCsv, importCsv,
   };
 }
