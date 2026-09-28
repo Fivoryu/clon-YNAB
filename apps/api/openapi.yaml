@@ -449,7 +449,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '500': { $ref: '#/components/responses/InternalError' }
-  components:
+components:
   securitySchemes:
     cookieAuth:
       type: apiKey

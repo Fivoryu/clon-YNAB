@@ -43,7 +43,7 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
     for (const error of errors) assert.match(block, new RegExp(`#/components/responses/${error}`), `${method.toUpperCase()} ${path} is missing ${error}`);
   }
   for (const parameter of ['BudgetId', 'CategoryId', 'IncomeId', 'TransactionId', 'Month', 'MonthOptional', 'RequestId', 'IdempotencyKey', 'IfMatch']) assert.match(document, new RegExp(`^    ${parameter}:`, 'm'), `missing shared parameter ${parameter}`);
-  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`    ${schema}:`), `missing DTO schema ${schema}`);
+  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
   assert.match(document, /cookieAuth:[\s\S]*?in: cookie[\s\S]*?name: sid/);
   assert.match(document, /X-Request-ID/);
   const requestIdSchemas = [...document.matchAll(/requestId: \{([^}]*)\}/g)].map(([_, schema]) => schema);
@@ -57,8 +57,12 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
   const responseBlock = (name: string) => {
     const start = document.indexOf(`${name}:`);
     assert.notEqual(start, -1, `missing shared response ${name}`);
-    const next = document.indexOf('\n        ', start + 1);
-    return document.slice(start, next === -1 ? document.length : next);
+    const lineStart = document.lastIndexOf('\n', start) + 1;
+    const indent = /^[ \t]*/.exec(document.slice(lineStart))![0].length;
+    const tail = document.slice(start);
+    const boundary = [...tail.matchAll(/\n([ \t]*)(?=\S)/g)].find((match) => match[1].length <= indent);
+    const end = boundary && boundary.index !== undefined ? start + boundary.index : document.length;
+    return document.slice(start, end);
   };
   for (const response of ['SessionSuccess', 'EmptySuccess']) {
     assert.match(responseBlock(response), /headers: \{ Set-Cookie: \{[\s\S]*?schema: \{ type: string \}/, `${response} must declare Set-Cookie`);
@@ -92,6 +96,59 @@ test('OpenAPI documents the bounded multi-account and transfer contract', () => 
   assert.match(document, /FinancialResult:[\s\S]*TransferResult/);
   assert.match(document, /InternalError/);
   assert.doesNotMatch(document, /\/api\/v1\/budgets\/\{budgetId\}\/\/(?:imports|cards|splits|reconciliation)/i);
+});
+
+test('OpenAPI declares components at the document root and every component reference resolves', (t) => {
+  const lines = document.split(/\r?\n/);
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  const topLevelKeys = new Set(
+    lines
+      .filter((line) => line.length > 0 && indentOf(line) === 0 && /^[A-Za-z0-9_]+:/.test(line))
+      .map((line) => line.slice(0, line.indexOf(':') + 1)),
+  );
+
+  assert.ok(topLevelKeys.has('components:'), 'components: must be declared at column 0');
+  assert.ok(topLevelKeys.has('paths:'), 'paths: must be declared at column 0');
+
+  const pathsIndex = lines.indexOf('paths:');
+  const componentsIndex = lines.indexOf('components:');
+  assert.notEqual(pathsIndex, -1, 'paths: must be declared at column 0');
+  assert.notEqual(componentsIndex, -1, 'components: must be declared at column 0');
+  assert.ok(pathsIndex < componentsIndex, 'components: must follow paths: at the document root');
+
+  // paths: must not contain a nested components key.
+  const nextTopLevelIndex = lines.findIndex((line, index) => index > pathsIndex && line.length > 0 && indentOf(line) === 0);
+  const pathsEnd = nextTopLevelIndex === -1 ? lines.length : nextTopLevelIndex;
+  const nestedComponents = lines.slice(pathsIndex + 1, pathsEnd).filter((line) => /^[ \t]+components\s*:/.test(line));
+  assert.deepEqual(nestedComponents, [], 'paths: must not contain a nested components key');
+
+  // Collect the sections declared directly under components: and the entries declared under each section.
+  const sections: string[] = [];
+  const declarations = new Map<string, Set<string>>();
+  let currentSection: string | null = null;
+  for (let index = componentsIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim().length === 0) continue;
+    const indent = indentOf(line);
+    if (indent === 0) break;
+    const key = /^([A-Za-z0-9_]+):/.exec(line.trim());
+    if (!key) continue;
+    if (indent === 2) {
+      currentSection = key[1];
+      sections.push(currentSection);
+      declarations.set(currentSection, new Set());
+    } else if (indent === 4 && currentSection) {
+      declarations.get(currentSection)!.add(key[1]);
+    }
+  }
+  assert.deepEqual(sections.slice().sort(), ['parameters', 'responses', 'schemas', 'securitySchemes'], 'components sections must be exactly securitySchemes, parameters, responses, and schemas');
+
+  // Every #/components/<section>/<name> reference anywhere in the document must resolve to a declared entry.
+  const references = [...document.matchAll(/#\/components\/([A-Za-z0-9]+)\/([A-Za-z0-9_]+)/g)].map((match) => ({ section: match[1], name: match[2] }));
+  assert.ok(references.length > 0, 'expected the document to reference at least one component');
+  const unresolved = references.filter(({ section, name }) => !declarations.get(section)?.has(name));
+  assert.deepEqual(unresolved, [], `unresolved component references: ${JSON.stringify(unresolved)}`);
+  t.diagnostic(`resolved ${references.length} #/components references across ${sections.length} sections`);
 });
 
 test('OpenAPI documents the manual CSV import/export contract and limits', () => {
