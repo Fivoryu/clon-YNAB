@@ -46,6 +46,18 @@ export const parseHistoryQuery = (url: URL): HistoryQuery => {
   return filter;
 };
 
+export const parseMonthlyReportQuery = (url: URL): string => {
+  const seen = new Set<string>(); let requested: string | undefined;
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key !== 'month' || seen.has(key)) throw new ApiError('VALIDATION_ERROR', 'report query contains an unknown or repeated parameter');
+    seen.add(key);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', 'month must be YYYY-MM');
+    requested = value;
+  }
+  if (!requested) throw new ApiError('VALIDATION_ERROR', 'month is required');
+  return requested;
+};
+
 export const createServer = (app: BudgetApp) => createHttpServer(async (req, res) => {
   const requestId = req.headers['x-request-id']?.toString() || randomUUID();
   try {
@@ -102,6 +114,7 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     if (budgetId && req.method === 'POST' && action === 'allocations') return json(res, 200, await app.assign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/unassign') return json(res, 200, await app.unassign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/move') return json(res, 200, await app.move(token, budgetId, input, requestId, commandOptions(req)));
+    if (budgetId && req.method === 'GET' && action === 'reports/monthly') return json(res, 200, await app.getMonthlyReport(token, budgetId, parseMonthlyReportQuery(url), requestId));
     if (budgetId && req.method === 'GET' && action === 'summary') return json(res, 200, await app.getFinancialSummary(token, budgetId, url.searchParams.get('month') || '', requestId));
     if (budgetId && req.method === 'GET' && action === 'dashboard') return json(res, 200, await app.getDashboard(token, budgetId, url.searchParams.get('month') || '', requestId));
     return json(res, 404, { error: { code: 'NOT_FOUND', message: 'Resource not found', requestId } });

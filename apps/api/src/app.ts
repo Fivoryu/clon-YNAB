@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { applyAssignment, calculateAccountBalances, moveAssignment, monthForDate, oldestAccount, releaseIncome, unassign, type AccountState } from './planning/engine.ts';
 import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, createHistoryCursor, isAccountOnlyHistoryFilter, normalizeMetadata, normalizeMetadataPatch, pageHistoryItems, parseHistoryCursor, parseTransactionDate, type HistoryFilter, type HistoryQuery } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
+import { projectMonthlyReport, type MonthlyReportProjection } from './reports/monthly-report.ts';
 import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
@@ -375,6 +376,16 @@ export class BudgetApp {
   }
   async getFinancialSummary(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
   async getDashboard(token: string, budgetId: string, requestedMonth: string, requestId?: string) { return this.readSummary(token, budgetId, requestedMonth, requestId); }
+  async getMonthlyReport(token: string, budgetId: string, requestedMonth: string, requestId?: string): Promise<Envelope<MonthlyReportProjection>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const requested = month(requestedMonth);
+    try {
+      const state = await this.financialStore.load(user.id, budgetId);
+      return ok(projectMonthlyReport(state, requested), requestId);
+    } catch (error) {
+      if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
+  }
 
   async listSimulationProfiles(token: string, budgetId: string, requestId?: string): Promise<Envelope<SimulationProfileSummary[]>> {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId);

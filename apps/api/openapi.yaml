@@ -320,6 +320,17 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/reports/monthly:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/Month' }]
+    get:
+      summary: Read the policy-approved single-month report
+      description: Owner-authorized report for exactly one month under the approved report-policy/v1 policy. Transfers are returned in their own section outside the income, expense, and category spending totals; WORKING records are included and marked provisional; unreleased income is exposed as pending release. The query accepts only month and rejects unknown or repeated parameters; no multi-month aggregation, comparison, or trend contract is exposed.
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/MonthlyReportSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/budgets/{budgetId}/simulations/profiles:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
     get:
@@ -542,6 +553,7 @@ paths:
     TransactionSuccess: { description: Effective transaction result, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionEnvelope' } } } }
     DeleteSuccess: { description: Deleted transaction result, content: { application/json: { schema: { $ref: '#/components/schemas/DeleteEnvelope' } } } }
     SummarySuccess: { description: Monthly summary, content: { application/json: { schema: { $ref: '#/components/schemas/SummaryEnvelope' } } } }
+    MonthlyReportSuccess: { description: Policy-approved single-month report, content: { application/json: { schema: { $ref: '#/components/schemas/MonthlyReportEnvelope' } } } }
     ValidationError: { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     Unauthenticated: { description: Authentication required or credentials invalid, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
     NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
@@ -636,3 +648,7 @@ paths:
     TransactionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionResult' } } }
     DeleteEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/DeleteResult' } } }
     SummaryEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialSummary' } } }
+    MonthlyReportCategory: { type: object, required: [id, name, archived, spendingMinor], properties: { id: { type: string }, name: { type: string }, archived: { type: boolean }, spendingMinor: { type: integer, description: Sum of the month's SPENDING for this category; transfers never contribute. } } }
+    MonthlyReportTransferItem: { type: object, required: [transferId, sourceAccount, destinationAccount, date, amountMinor], properties: { transferId: { type: string }, sourceAccount: { $ref: '#/components/schemas/AccountReference' }, destinationAccount: { $ref: '#/components/schemas/AccountReference' }, date: { type: string, format: date }, amountMinor: { type: integer, minimum: 1 } } }
+    MonthlyReport: { type: object, required: [month, policy, incomeMinor, expenseMinor, categories, transfers, provisional, incomeRelease, version], properties: { month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, policy: { type: object, required: [id, month], properties: { id: { type: string, enum: [report-policy/v1], description: Approved report accounting policy identifier. }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }, incomeMinor: { type: integer, description: 'Effective month INCOME (POSTED and WORKING) including unreleased income; releases, assignments, moves, and transfers never contribute.' }, expenseMinor: { type: integer, description: 'Effective month SPENDING (POSTED and WORKING); transfers never contribute.' }, categories: { type: array, items: { $ref: '#/components/schemas/MonthlyReportCategory' } }, transfers: { type: object, required: [treatment, totalMinor, items], properties: { treatment: { type: string, enum: [OUTSIDE_INCOME_EXPENSE_TOTALS] }, totalMinor: { type: integer, description: 'Sum of the listed transfers, labelled outside the income and expense totals.' }, items: { type: array, items: { $ref: '#/components/schemas/MonthlyReportTransferItem' } } } }, provisional: { type: object, required: [treatment, count, incomeMinor, expenseMinor], properties: { treatment: { type: string, enum: [INCLUDED_PROVISIONAL] }, count: { type: integer, description: WORKING income and spending records included in this month. }, incomeMinor: { type: integer }, expenseMinor: { type: integer } } }, incomeRelease: { type: object, required: [treatment, receivedMinor, releasedMinor, pendingMinor], properties: { treatment: { type: string, enum: [PENDING_RELEASE] }, receivedMinor: { type: integer }, releasedMinor: { type: integer }, pendingMinor: { type: integer, description: receivedMinor minus releasedMinor; unreleased income is labelled pending release and still counts in incomeMinor. } } }, version: { type: integer } } }
+    MonthlyReportEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/MonthlyReport' } } }
