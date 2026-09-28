@@ -7,7 +7,7 @@ async function registerThroughUi(page: any) {
   const email = `ux-${randomUUID()}@example.com`;
   await page.goto('/register');
   await page.getByLabel('Correo').fill(email);
-  await page.getByLabel('Contraseña').fill(password);
+  await page.getByLabel('Contraseña', { exact: true }).fill(password);
   await page.getByLabel('Repite la contraseña').fill(password);
   await page.getByRole('button', { name: 'Crear cuenta y continuar' }).click();
   await expect(page).toHaveURL(/\/setup/);
@@ -42,7 +42,7 @@ test('new user moves from registration to focused onboarding and budget without 
   await page.getByRole('button', { name: 'Abrir mi presupuesto' }).click();
   await expect(page).toHaveURL(/\/budget/);
   await expect(page.getByText('Disponible para asignar')).toBeVisible();
-  await expect(page.getByText(/1[.\s]?250,50|1,250\.50/)).toBeVisible();
+  await expect(page.locator('.rta-card').getByText(/1[.\s]?250,50|1,250\.50/)).toBeVisible();
 });
 
 test('daily workflow uses routed budget, one transaction dialog, automatic history, and browser navigation', async ({ page }) => {
@@ -87,6 +87,6 @@ test('CSV lives under settings instead of daily navigation', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Configuración' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Importar y exportar CSV' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Descargar CSV' })).toBeVisible();
-  await page.getByRole('link', { name: 'Presupuesto' }).click();
+  await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: 'Presupuesto' }).click();
   await expect(page.getByText('Importar y exportar transacciones')).toHaveCount(0);
 });
