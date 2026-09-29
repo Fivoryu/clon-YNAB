@@ -91,10 +91,10 @@ enum SimulationOutcome {
 }
 
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email        String    @unique
   passwordHash String
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   sessions     Session[]
   budget       Budget?
   deletionAudits TransactionDeletionAudit[]
@@ -102,24 +102,24 @@ model User {
 }
 
 model Session {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String   @db.Uuid
   tokenHash String   @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @db.Timestamptz(6)
+  revokedAt DateTime? @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onUpdate: NoAction, onDelete: Cascade)
   @@index([userId, expiresAt])
 }
 
 model Budget {
-  id         String             @id @default(uuid()) @db.Uuid
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId    String             @unique @db.Uuid
   timezone   String             @default("UTC")
   setupStep  SetupStep          @default(ACCOUNT)
-  createdAt  DateTime           @default(now())
-  updatedAt  DateTime           @updatedAt
-  owner      User               @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  createdAt  DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  owner      User               @relation(fields: [ownerId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   accounts   Account[]
   categories Category[]
   categoryTargets CategoryTarget[]
@@ -141,14 +141,14 @@ model Budget {
 }
 
 model Account {
-  id              String             @id @default(uuid()) @db.Uuid
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId        String             @db.Uuid
   name            String
   kind            AccountKind
   archived        Boolean            @default(false)
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
-  budget          Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  budget          Budget             @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   openingBalances OpeningBalance[]
   events          FinancialEvent[]   @relation("AccountEvents")
   sourceTransfers Transfer[]         @relation("TransferSource")
@@ -158,13 +158,13 @@ model Account {
 }
 
 model Category {
-  id                String           @id @default(uuid()) @db.Uuid
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId          String           @db.Uuid
   name              String
   archived          Boolean          @default(false)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  budget            Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+  budget            Budget           @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   events            FinancialEvent[] @relation("CategoryEvents")
   sourceEvents      FinancialEvent[] @relation("SourceCategoryEvents")
   destinationEvents FinancialEvent[] @relation("DestinationCategoryEvents")
@@ -179,33 +179,33 @@ model CategoryTarget {
   kind        CategoryTargetKind
   amountMinor BigInt
   targetMonth String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  budget      Budget            @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  category    Category          @relation(fields: [budgetId, categoryId], references: [budgetId, id], onDelete: Restrict)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
+  budget      Budget            @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  category    Category          @relation(fields: [budgetId, categoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
 }
 
 model OpeningBalance {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId     String   @db.Uuid
   amountMinor   BigInt
-  recordedAt    DateTime @default(now())
-  account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  recordedAt    DateTime @default(now()) @db.Timestamptz(6)
+  account       Account  @relation(fields: [accountId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([accountId])
   @@index([accountId, recordedAt])
 }
 
 model BudgetMonth {
-  id        String           @id @default(uuid()) @db.Uuid
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId  String           @db.Uuid
-  month     String
+  month     String @db.VarChar(7)
   version   Int              @default(0)
-  budget    Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  budget    Budget           @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, month])
 }
 
 model FinancialEvent {
-  id                String             @id @default(uuid()) @db.Uuid
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId          String             @db.Uuid
   accountId         String?            @db.Uuid
   categoryId        String?            @db.Uuid
@@ -220,18 +220,18 @@ model FinancialEvent {
   kind              FinancialEventKind
   amountMinor       BigInt
   businessDate      DateTime?          @db.Date
-  month             String?
-  createdAt         DateTime           @default(now())
+  month             String? @db.VarChar(7)
+  createdAt         DateTime           @default(now()) @db.Timestamptz(6)
   payee             String?
   memo              String?
-  budget            Budget             @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  account           Account?           @relation("AccountEvents", fields: [budgetId, accountId], references: [budgetId, id], onDelete: Restrict)
-  category          Category?          @relation("CategoryEvents", fields: [budgetId, categoryId], references: [budgetId, id], onDelete: Restrict)
-  sourceCategory    Category?          @relation("SourceCategoryEvents", fields: [budgetId, sourceCategoryId], references: [budgetId, id], onDelete: Restrict)
-  destinationCategory Category?        @relation("DestinationCategoryEvents", fields: [budgetId, destinationCategoryId], references: [budgetId, id], onDelete: Restrict)
-  relatedEvent      FinancialEvent?    @relation("ReleaseOf", fields: [budgetId, relatedEventId], references: [budgetId, id], onDelete: Restrict)
+  budget            Budget             @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  account           Account?           @relation("AccountEvents", fields: [budgetId, accountId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  category          Category?          @relation("CategoryEvents", fields: [budgetId, categoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  sourceCategory    Category?          @relation("SourceCategoryEvents", fields: [budgetId, sourceCategoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  destinationCategory Category?        @relation("DestinationCategoryEvents", fields: [budgetId, destinationCategoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  relatedEvent      FinancialEvent?    @relation("ReleaseOf", fields: [budgetId, relatedEventId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   release           FinancialEvent?    @relation("ReleaseOf")
-  transfer          Transfer?          @relation(fields: [budgetId, transferId], references: [budgetId, id], onDelete: Restrict)
+  transfer          Transfer?          @relation(fields: [budgetId, transferId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, id])
   @@unique([budgetId, relatedEventId])
   @@index([budgetId, month, kind])
@@ -240,25 +240,26 @@ model FinancialEvent {
   @@index([budgetId, accountId, businessDate])
   @@index([budgetId, categoryId, businessDate])
   @@index([budgetId, transferId])
+  @@index([supersedesEventId])
   @@unique([budgetId, transferId, kind])
   @@index([accountId, createdAt])
   @@index([categoryId, month])
 }
 
 model Transfer {
-  id                   String           @id @default(uuid()) @db.Uuid
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId             String           @db.Uuid
   sourceAccountId      String           @db.Uuid
   destinationAccountId String           @db.Uuid
   amountMinor          BigInt
   businessDate         DateTime         @db.Date
-  month                String
-  createdAt            DateTime         @default(now())
+  month                String @db.VarChar(7)
+  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
   payee                String?
   memo                 String?
-  budget               Budget           @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  sourceAccount        Account          @relation("TransferSource", fields: [budgetId, sourceAccountId], references: [budgetId, id], onDelete: Restrict)
-  destinationAccount   Account          @relation("TransferDestination", fields: [budgetId, destinationAccountId], references: [budgetId, id], onDelete: Restrict)
+  budget               Budget           @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  sourceAccount        Account          @relation("TransferSource", fields: [budgetId, sourceAccountId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  destinationAccount   Account          @relation("TransferDestination", fields: [budgetId, destinationAccountId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   events               FinancialEvent[]
   @@unique([budgetId, id])
   @@index([budgetId, businessDate, createdAt, id])
@@ -268,28 +269,28 @@ model Transfer {
 }
 
 model TransactionDeletionAudit {
-  id String @id @default(uuid()) @db.Uuid
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId String @db.Uuid
   actorId String @db.Uuid
   transactionId String @db.Uuid
   requestId String?
   reason String?
   idempotencyKey String
-  createdAt DateTime @default(now())
-  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  budget Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, idempotencyKey])
   @@index([budgetId, transactionId, createdAt])
 }
 
 model CommandReceipt {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId    String   @db.Uuid
   idempotencyKey String
   payloadDigest String
   result      Json
-  createdAt   DateTime @default(now())
-  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  budget      Budget   @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, idempotencyKey])
 }
 
@@ -306,16 +307,16 @@ model SimulationProfile {
 }
 
 model SimulationScope {
-  id            String @id @default(uuid()) @db.Uuid
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId      String @unique @db.Uuid
   auditSequence Int @default(0)
   lockVersion   Int @default(0)
-  budget        Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  budget        Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   runs          SimulationRun[] @relation("SimulationRunScope")
 }
 
 model SimulationRun {
-  id                String @id @default(uuid()) @db.Uuid
+  id                String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId          String @db.Uuid
   profileCode       String
   fixtureVersion    String
@@ -329,11 +330,11 @@ model SimulationRun {
   processedRecordCount Int @default(0)
   diagnosticCode    String?
   diagnosticMessage String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  budget            Budget @relation("SimulationRunBudget", fields: [budgetId], references: [id], onDelete: Restrict, map: "SimulationRun_budget_fkey")
-  scope             SimulationScope @relation("SimulationRunScope", fields: [budgetId], references: [budgetId], onDelete: Restrict, map: "SimulationRun_scope_fkey")
-  profile           SimulationProfile @relation("SimulationProfileRuns", fields: [profileCode, fixtureVersion], references: [code, fixtureVersion], onDelete: Restrict)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  budget            Budget @relation("SimulationRunBudget", fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict, map: "SimulationRun_budget_fkey")
+  scope             SimulationScope @relation("SimulationRunScope", fields: [budgetId], references: [budgetId], onUpdate: NoAction, onDelete: Restrict, map: "SimulationRun_scope_fkey")
+  profile           SimulationProfile @relation("SimulationProfileRuns", fields: [profileCode, fixtureVersion], references: [code, fixtureVersion], onUpdate: NoAction, onDelete: Restrict)
   attempts          SimulationAttempt[]
   checkpoints       SimulationCheckpoint[]
   records           SimulatedRecord[]
@@ -344,7 +345,7 @@ model SimulationRun {
 }
 
 model SimulationAttempt {
-  id                String @id @default(uuid()) @db.Uuid
+  id                String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId          String @db.Uuid
   runId             String @db.Uuid
   sequence          Int
@@ -355,9 +356,9 @@ model SimulationAttempt {
   outcome           SimulationOutcome
   diagnosticCode    String?
   diagnosticMessage String?
-  eventAt           DateTime
-  budget            Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  eventAt           DateTime @db.Timestamptz(6)
+  budget            Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   records           SimulatedRecord[]
   candidateEvents   SimulationCandidateEvent[] @relation("AttemptCandidateEvents")
   auditEntries      SimulationAuditEntry[] @relation("AttemptAuditEntries")
@@ -368,16 +369,16 @@ model SimulationAttempt {
 }
 
 model SimulationCheckpoint {
-  id                  String @id @default(uuid()) @db.Uuid
+  id                  String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId            String @db.Uuid
   runId               String @db.Uuid
   sequence            Int
   cursor              Int
   state               SimulationRunState
   processedRecordCount Int
-  checkpointAt        DateTime
-  budget              Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  run                 SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
+  checkpointAt        DateTime @db.Timestamptz(6)
+  budget              Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  run                 SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   records             SimulatedRecord[]
   candidateEvents     SimulationCandidateEvent[] @relation("CheckpointCandidateEvents")
   auditEntries        SimulationAuditEntry[] @relation("CheckpointAuditEntries")
@@ -387,7 +388,7 @@ model SimulationCheckpoint {
 }
 
 model SimulatedRecord {
-  id              String @id @default(uuid()) @db.Uuid
+  id              String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId        String @db.Uuid
   runId           String @db.Uuid
   sourceRecordId  String
@@ -400,11 +401,11 @@ model SimulatedRecord {
   memo            String?
   checkpointId    String? @db.Uuid
   attemptId       String @db.Uuid
-  deliveredAt     DateTime
-  budget          Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  run             SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
-  attempt         SimulationAttempt @relation(fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
-  checkpoint      SimulationCheckpoint? @relation(fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  deliveredAt     DateTime @db.Timestamptz(6)
+  budget          Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  run             SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  attempt         SimulationAttempt @relation(fields: [budgetId, attemptId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  checkpoint      SimulationCheckpoint? @relation(fields: [budgetId, checkpointId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   candidates      SimulationCandidate[]
   @@unique([budgetId, runId, sourceRecordId, deliveryOrdinal])
   @@unique([budgetId, id])
@@ -423,16 +424,16 @@ model SimulationCandidate {
   payee              String?
   memo               String?
   provenance         Json
-  budget             Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  run                SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
-  simulatedRecord    SimulatedRecord @relation(fields: [budgetId, simulatedRecordId], references: [budgetId, id], onDelete: Restrict)
+  budget             Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  run                SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  simulatedRecord    SimulatedRecord @relation(fields: [budgetId, simulatedRecordId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   lifecycle          SimulationCandidateEvent[]
   @@unique([budgetId, id])
   @@index([budgetId, runId, simulatedRecordId])
 }
 
 model SimulationCandidateEvent {
-  id           String @id @default(uuid()) @db.Uuid
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId     String @db.Uuid
   candidateId  String
   sequence     Int
@@ -440,17 +441,17 @@ model SimulationCandidateEvent {
   status       SimulationCandidateStatus
   attemptId    String @db.Uuid
   checkpointId String? @db.Uuid
-  eventAt      DateTime
-  budget       Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  candidate    SimulationCandidate @relation(fields: [budgetId, candidateId], references: [budgetId, id], onDelete: Restrict)
-  attempt      SimulationAttempt @relation("AttemptCandidateEvents", fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
-  checkpoint   SimulationCheckpoint? @relation("CheckpointCandidateEvents", fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  eventAt      DateTime @db.Timestamptz(6)
+  budget       Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  candidate    SimulationCandidate @relation(fields: [budgetId, candidateId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  attempt      SimulationAttempt @relation("AttemptCandidateEvents", fields: [budgetId, attemptId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  checkpoint   SimulationCheckpoint? @relation("CheckpointCandidateEvents", fields: [budgetId, checkpointId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, candidateId, sequence])
   @@index([budgetId, candidateId, sequence])
 }
 
 model SimulationAuditEntry {
-  id                String @id @default(uuid()) @db.Uuid
+  id                String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId          String @db.Uuid
   runId             String @db.Uuid
   sequence          Int
@@ -464,26 +465,26 @@ model SimulationAuditEntry {
   checkpointId      String? @db.Uuid
   diagnosticCode    String?
   diagnosticMessage String?
-  eventAt           DateTime
-  budget            Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
-  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onDelete: Restrict)
-  actor             User @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  attempt           SimulationAttempt? @relation("AttemptAuditEntries", fields: [budgetId, attemptId], references: [budgetId, id], onDelete: Restrict)
-  checkpoint        SimulationCheckpoint? @relation("CheckpointAuditEntries", fields: [budgetId, checkpointId], references: [budgetId, id], onDelete: Restrict)
+  eventAt           DateTime @db.Timestamptz(6)
+  budget            Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  run               SimulationRun @relation(fields: [budgetId, runId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  actor             User @relation(fields: [actorId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  attempt           SimulationAttempt? @relation("AttemptAuditEntries", fields: [budgetId, attemptId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  checkpoint        SimulationCheckpoint? @relation("CheckpointAuditEntries", fields: [budgetId, checkpointId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, sequence])
   @@index([budgetId, runId, sequence])
 }
 
 model SimulationCommandReceipt {
-  id             String @id @default(uuid()) @db.Uuid
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   budgetId       String @db.Uuid
   idempotencyKey String
   command        SimulationAuditCommand
   payloadDigest  String
   result         Json
   runId          String? @db.Uuid
-  createdAt      DateTime @default(now())
-  budget         Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  budget         Budget @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, idempotencyKey])
   @@index([budgetId, runId, createdAt])
 }
