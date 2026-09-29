@@ -110,7 +110,11 @@ An earlier draft of this record claimed all ten browser tests passed. That claim
 | 6 | parent, full suite | passed (10/10) |
 | 7 | parent, full suite | passed (10/10) |
 
-Characterisation: the test passes in isolation and passes in roughly five of seven full-suite runs. It is therefore a timing or load-sensitive failure rather than a deterministic defect of the account-detail surface, whose page and route are unchanged by this work unit. Two candidate causes remain undistinguished: a pre-existing hydration or navigation race in that journey, or added load from the new browser test, which seeds a three-month range and a twenty-four-month range earlier in the same sequentially-run suite. Root-causing it needs the Playwright trace from a failing run, which was not captured.
+Characterisation after eleven full-suite runs (nine passed, two failed, always the same test): the test passes in isolation and passes in the large majority of full-suite runs, so it is a timing-sensitive failure rather than a deterministic defect of the account-detail surface, whose page and route are unchanged by this work unit.
+
+The two failures both occurred in runs that followed `npm run typecheck:web` and `npm run build:web` earlier in the same command chain, which made "a rebuild while a reused dev server is serving" the leading hypothesis. That hypothesis was then tested directly and REFUTED: with no dev server listening, `npm run build:web` followed immediately by the browser suite produced 10 passed. Four of the last four runs passed, including that experiment.
+
+No root cause is claimed. The remaining candidates are an unfixed hydration or navigation race in that pre-existing journey, and added load from the new browser test, which seeds a three-month range and a twenty-four-month range earlier in the same sequentially-run suite. The Playwright configuration already retains a trace on failure, so the next failure should be diagnosed from `test-results/` rather than from another guess. This is recorded as an open follow-up, NOT as a green result.
 
 This is recorded as an open follow-up, NOT as a green result. The product behaviour of Work Unit 2 is verified; the reliability of one pre-existing browser journey is not.
 

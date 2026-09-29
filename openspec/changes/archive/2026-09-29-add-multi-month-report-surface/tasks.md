@@ -1,6 +1,6 @@
 # Implementation Tasks: Multi-Month Report Surface
 
-Execution status: Proposal approved 2026-09-28 and specs validated. Design and this task breakdown are **not** yet approved; implementation is not authorized until the owner approves them. Scope is the surface only. The API contract is frozen and archived, and MUST NOT change.
+Execution status: Proposal approved 2026-09-28, specs validated, design and tasks approved. Both work units are implemented, independently verified read-only with no candidate-caused blockers, and committed as `537242a` and `879a514`. One open follow-up is recorded and is NOT claimed as green: a pre-existing account-detail browser journey fails intermittently in full-suite runs.
 
 ## Review Workload Forecast
 
@@ -44,7 +44,7 @@ The estimate is high because real browser coverage is a requirement of this chan
 
 ## Parent-owned post-apply gates
 
-- [ ] Parent review of each completed work unit: changed scope, test evidence, changed-line estimate against the 400-line budget, and rollback boundary. <!-- sdd-owner: parent -->
-- [ ] Confirm nothing under `apps/api/` changed and that no trend, delta, percentage, comparison, or export field or control was added anywhere. <!-- sdd-owner: parent -->
-- [ ] Confirm the single-month `/reports` surface and its request are byte-identical and that its existing tests pass unmodified. <!-- sdd-owner: parent -->
-- [ ] Confirm the three disclosures, both policy identifiers, and the revision are visible to a reader, and that no period pending-release figure appears on the surface. <!-- sdd-owner: parent -->
+- [x] Parent review of each completed work unit: changed scope, test evidence, changed-line estimate against the 400-line budget, and rollback boundary. Work Unit 1 measured 249 changed lines against a 200-260 forecast and was implemented inline by the parent after the `gentle-ai-worker` subagent failed three consecutive times without writing anything; the deviation is recorded in `apply-progress.md`. Work Unit 2 measured 375 changed lines against a 300-400 forecast. Both were independently verified read-only with no candidate-caused blockers, and every finding from those verifications was either closed or recorded. <!-- sdd-owner: parent -->
+- [x] Confirm nothing under `apps/api/` changed and that no trend, delta, percentage, comparison, or export field or control was added anywhere. Confirmed by read-only diff against the previous commit: no `apps/api/` change, and the rendered surface contains no such control. The chart displays each measure's raw value and states that no differences or percentages are calculated. <!-- sdd-owner: parent -->
+- [x] Confirm the single-month `/reports` surface and its request are byte-identical and that its existing tests pass unmodified. Confirmed: `apps/web/app/reports/page.tsx` is unchanged, `readMonthlyReport` extracts identically to its previous revision, and its request is still the only `?month=` call. One existing assertion was necessarily superseded because the route now serves two modes; it was replaced by a stricter assertion of one call per mode plus no other report endpoint, and the change is recorded rather than silent. <!-- sdd-owner: parent -->
+- [x] Confirm the three disclosures, both policy identifiers, and the revision are visible to a reader, and that no period pending-release figure appears on the surface. Confirmed in the rendered DOM by the browser suite, which asserts all three disclosure statements, both policy identifiers, the range endpoints, and the revision, and asserts that the period panel carries no pending-release text while each month still reports its own breakdown. <!-- sdd-owner: parent -->
