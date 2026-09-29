@@ -54,7 +54,7 @@ The broader MVP remains a later MVP slice roadmap. The existing heading is retai
 - Closed-month corrections or propagation (later MVP slice; **Open question**).
 - Cleared/pending/uncleared transitions and cleared-vs-working balance effects (later MVP slice/P1).
 - Manual reconciliation and cleared-history workflows (later MVP slice/P1).
-- Targets and scheduled/repeating transactions (deferred/out of MVP, P2).
+- Targets and scheduled/repeating transactions (deferred/out of MVP, P2). Category targets were delivered in the category targets phase; scheduled and repeating transactions remain deferred.
 - Cash/card overspending rollover and credit-card payment state (later MVP slice/P1; policy **Open question**).
 - Cards and basic credit-card behavior, including UC-16, which is later MVP slice/P1 scope.
 
@@ -118,7 +118,7 @@ Select source and destination accounts
 
 ## Entry gate for the first vertical slice
 
-**Clone decision:** No implementation starts until the Group 3 decisions are traced to concrete acceptance criteria. After this documentation update and read-only verification, the next phase is bounded SDD/OpenSpec for the first vertical slice. Cards, splits, transfers, reconciliation corrections, targets, scheduled transactions, and full formulas remain deferred and are not entry-gate blockers for the bounded slice.
+**Clone decision:** No implementation starts until the Group 3 decisions are traced to concrete acceptance criteria. After this documentation update and read-only verification, the next phase is bounded SDD/OpenSpec for the first vertical slice. Cards, splits, transfers, reconciliation corrections, scheduled transactions, and full formulas remain deferred and are not entry-gate blockers for the bounded slice.
 
 ## Acceptance criteria for the first vertical slice
 
@@ -147,7 +147,7 @@ The following broader acceptance criteria remain part of the later MVP roadmap r
 - Later-MVP transfers link same-budget source/destination sides with equal opposite amounts, no ordinary spending Activity, atomicity, and no-duplicate retry behavior.
 - Cleared/pending/uncleared transitions and cleared-vs-working balance effects are later P1 behavior; they are blocking dependencies only before reconciliation implementation.
 - Later-MVP/P1 reconciliation confirms cleared balance against bank state and protects reconciled history; ordinary paths return `CONFLICT` for reconciled transactions. Correction mechanism, retention, export/report presentation, and audit immutability remain **Open question**.
-- Targets and scheduled transactions remain deferred/out of MVP and do not create money automatically.
+- Category targets were delivered and never create money automatically; scheduled transactions remain deferred/out of MVP and likewise do not create money automatically.
 
 ## Suggested delivery slices
 
@@ -158,7 +158,7 @@ The following broader acceptance criteria remain part of the later MVP roadmap r
 5. Realized income and categorized spending; later transaction variants such as splits, transfers, and ordinary edit/delete.
 6. Dashboard and monthly summary.
 7. Cleared state and manual reconciliation (MVP expanded/P1).
-8. Targets and scheduled transactions as a second milestone.
+8. Category targets were delivered; scheduled and repeating transactions remain a later milestone.
 
 Each slice should leave the application runnable and documented. Do not start the next slice while the current domain behavior is still ambiguous.
 

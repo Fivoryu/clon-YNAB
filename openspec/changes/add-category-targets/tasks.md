@@ -59,10 +59,10 @@ The estimate is high because this phase introduces persisted state and a migrati
 
 **Depends on:** Work unit 3a's presentation. **Boundary:** `apps/web/app/budget/page.tsx`, `apps/web/app/globals.css`, tests under `apps/web/test/` and `apps/web/e2e/`, and the authorized update to `docs/product/functional-requirements.md`, `docs/product/mvp-scope.md`, and `docs/product/actors-and-use-cases.md`. This unit exists because the Budget view currently lists only active categories, so an archived category's target is not reachable at all. Roll back this unit at the archived-disclosure boundary.
 
-13. [ ] **RED:** Add failing tests for an archived category keeping its target readable from the Budget view with no actionable suggestion, and for the product documents no longer describing targets as deferred. Add real browser coverage for the archived case. <!-- sdd-owner: implementation -->
-14. [ ] **GREEN:** Add the archived-category disclosure to the Budget view, rendering any target read-only and offering no assignment action, and update the three product-scope documents to stop deferring targets and to record the questions this phase resolved. <!-- sdd-owner: implementation -->
-15. [ ] **TRIANGULATE:** Strengthen the coverage for an archived category with no target, an archived category whose target is met, reopening the disclosure by keyboard, and the document statements that previously deferred targets. <!-- sdd-owner: implementation -->
-16. [ ] **REFACTOR:** Refine the archived disclosure and the documents; run `npm run test:web`, `npm run typecheck:web`, `npm run build:web`, and the browser suite, and record each exact result. <!-- sdd-owner: implementation -->
+13. [x] **RED:** Add failing tests for an archived category keeping its target readable from the Budget view with no actionable suggestion, and for the product documents no longer describing targets as deferred. Add real browser coverage for the archived case. <!-- sdd-owner: implementation -->
+14. [x] **GREEN:** Add the archived-category disclosure to the Budget view, rendering any target read-only and offering no assignment action, and update the three product-scope documents to stop deferring targets and to record the questions this phase resolved. <!-- sdd-owner: implementation -->
+15. [x] **TRIANGULATE:** Strengthen the coverage for an archived category with no target, an archived category whose target is met, reopening the disclosure by keyboard, and the document statements that previously deferred targets. <!-- sdd-owner: implementation -->
+16. [x] **REFACTOR:** Refine the archived disclosure and the documents; run `npm run test:web`, `npm run typecheck:web`, `npm run build:web`, and the browser suite, and record each exact result. <!-- sdd-owner: implementation -->
 
 ## Parent-owned post-apply gates
 

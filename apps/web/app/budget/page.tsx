@@ -6,13 +6,28 @@ import { RouteGate } from '../components/shell/RouteGate';
 import { MoneyInput } from '../components/ui/MoneyInput';
 import { formatMoney, minorToInput, parseMoneyToMinor } from '../lib/money';
 import { useBudget } from '../providers/BudgetAppProvider';
-import type { CategorySummary, CategoryTargetInput } from '../models';
+import { showsTargetDisclosure, type CategorySummary, type CategoryTargetInput } from '../models';
 
 function shiftMonth(month: string, delta: number) {
   const [year, m] = month.split('-').map(Number); const date = new Date(Date.UTC(year, m - 1 + delta, 1)); return date.toISOString().slice(0, 7);
 }
 function monthLabel(month: string) {
   const [year, m] = month.split('-').map(Number); return new Intl.DateTimeFormat('es-BO', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, m - 1, 1)));
+}
+
+function TargetState({ category, showDisclosure }: { category: CategorySummary; showDisclosure: boolean }) {
+  const target = category.target;
+  if (!target) return null;
+  return <section className="target-state" aria-label={`Objetivo de ${category.name}`}>
+    <h3>{target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado mensual' : 'Saldo para una fecha'}</h3>
+    <dl><div><dt>Monto objetivo</dt><dd>{formatMoney(target.amountMinor)}</dd></div>
+      {target.kind === 'BALANCE_BY_DATE' && <div><dt>Mes objetivo</dt><dd>{monthLabel(target.targetMonth)}</dd></div>}
+      <div><dt>Progreso · {target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado este mes' : 'Saldo actual'}</dt><dd>{formatMoney(target.progressMinor)}</dd></div>
+      <div><dt>Falta</dt><dd>{formatMoney(target.remainingMinor)}</dd></div>
+      <div><dt>Estado</dt><dd>{target.status === 'MET' ? 'Cumplida' : target.status === 'OVERDUE' ? 'Vencida' : 'En progreso'}</dd></div>
+    </dl>
+    {showDisclosure && <p className="target-disclosure">Se muestra la definición actual; no se conserva el historial del objetivo.</p>}
+  </section>;
 }
 
 function CategoryTargetPanel({ category }: { category: CategorySummary }) {
@@ -23,8 +38,7 @@ function CategoryTargetPanel({ category }: { category: CategorySummary }) {
   const [targetMonth, setTargetMonth] = useState(target?.kind === 'BALANCE_BY_DATE' ? target.targetMonth : '');
   const openEditor = () => { setKind(target?.kind ?? 'MONTHLY_SET_ASIDE'); setAmount(target ? minorToInput(target.amountMinor) : ''); setTargetMonth(target?.kind === 'BALANCE_BY_DATE' ? target.targetMonth : ''); setConfirming(false); setEditing(true); };
   // No target history is retained, so anything shown for a month that is not the current one is today's definition.
-  // A dated target adds its own case: while the viewed month precedes its target month, the definition shown is the current one too.
-  const showTargetDisclosure = app.month < app.today.slice(0, 7) || (target?.kind === 'BALANCE_BY_DATE' && app.month < target.targetMonth);
+  const showTargetDisclosure = showsTargetDisclosure(app.month, app.today.slice(0, 7), target);
   const saveTarget = async () => {
     try {
       const amountMinor = parseMoneyToMinor(amount);
@@ -37,16 +51,7 @@ function CategoryTargetPanel({ category }: { category: CategorySummary }) {
   const confirmAssignment = async () => { if (target && await app.assign(category.id, target.remainingMinor)) setConfirming(false); };
   const showSuggestion = Boolean(target && !category.archived && target.remainingMinor > 0);
   return <div className="target-context" data-testid={`target-context-${category.id}`}>
-    {target && <section className="target-state" aria-label={`Objetivo de ${category.name}`}>
-      <h3>{target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado mensual' : 'Saldo para una fecha'}</h3>
-      <dl><div><dt>Monto objetivo</dt><dd>{formatMoney(target.amountMinor)}</dd></div>
-        {target.kind === 'BALANCE_BY_DATE' && <div><dt>Mes objetivo</dt><dd>{monthLabel(target.targetMonth)}</dd></div>}
-        <div><dt>Progreso · {target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado este mes' : 'Saldo actual'}</dt><dd>{formatMoney(target.progressMinor)}</dd></div>
-        <div><dt>Falta</dt><dd>{formatMoney(target.remainingMinor)}</dd></div>
-        <div><dt>Estado</dt><dd>{target.status === 'MET' ? 'Cumplida' : target.status === 'OVERDUE' ? 'Vencida' : 'En progreso'}</dd></div>
-      </dl>
-      {showTargetDisclosure && <p className="target-disclosure">Se muestra la definición actual; no se conserva el historial del objetivo.</p>}
-    </section>}
+    <TargetState category={category} showDisclosure={showTargetDisclosure} />
     <div className="target-actions">
       <button type="button" className="secondary compact" onClick={openEditor}>{target ? 'Editar objetivo' : 'Definir objetivo'}</button>
       {target && <button type="button" className="ghost danger compact" onClick={() => void removeTarget()} disabled={app.busy}>Quitar objetivo</button>}
@@ -81,6 +86,7 @@ function CategoryRow({ category }: { category: CategorySummary }) {
 export default function BudgetPage() {
   const app = useBudget(); const [newCategory, setNewCategory] = useState('');
   const categories = useMemo(() => app.summary?.categories.filter(c => !c.archived) ?? [], [app.summary]);
+  const archivedTargets = useMemo(() => app.summary?.categories.filter(c => c.archived && c.target) ?? [], [app.summary]);
   const addCategory = async () => { if (!newCategory.trim()) return; const result = await app.createCategory(newCategory.trim()); if (result) setNewCategory(''); };
-  return <RouteGate gate="ready"><AppShell title="Presupuesto" subtitle="Decide qué hará tu dinero este mes."><section className="budget-toolbar"><button type="button" className="icon-button" aria-label="Mes anterior" onClick={() => app.setMonth(shiftMonth(app.month, -1))}>←</button><div><small>Mes de planificación</small><strong>{monthLabel(app.month)}</strong></div><button type="button" className="icon-button" aria-label="Mes siguiente" onClick={() => app.setMonth(shiftMonth(app.month, 1))}>→</button></section>{app.pendingIncomes.length > 0 && <section className="attention-card"><div><p className="section-kicker">Dinero por confirmar</p><h2>Tienes {app.pendingIncomes.length} ingreso{app.pendingIncomes.length > 1 ? 's' : ''} pendiente{app.pendingIncomes.length > 1 ? 's' : ''}</h2><p>Ya están en tus cuentas, pero todavía no están disponibles para asignar.</p></div><a className="button-link" href="/transactions">Revisar ingresos</a></section>}<section className="budget-hero"><div className="rta-card"><small>Disponible para asignar</small><strong className={(app.summary?.rta.amountMinor ?? 0) < 0 ? 'negative' : ''}>{formatMoney(app.summary?.rta.amountMinor ?? 0)}</strong><p>{(app.summary?.rta.amountMinor ?? 0) > 0 ? 'Este dinero aún no tiene una categoría.' : 'Tu dinero disponible ya tiene un propósito.'}</p></div><div className="metric-card"><small>Saldo total en cuentas</small><strong>{formatMoney(app.summary?.accountBalanceMinor ?? 0)}</strong><span>{app.activeAccounts.length} cuenta{app.activeAccounts.length === 1 ? '' : 's'} activa{app.activeAccounts.length === 1 ? '' : 's'}</span></div><div className="metric-card"><small>Asignado este mes</small><strong>{formatMoney(app.summary?.rta.assignedMinor ?? 0)}</strong><span>{categories.length} categorías activas</span></div></section><section className="card budget-categories"><div className="section-heading"><div><p className="section-kicker">Tu plan</p><h2>Categorías</h2><p className="muted">Ajusta cada prioridad directamente donde la ves.</p></div><div className="quick-add"><input aria-label="Nombre de nueva categoría" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="Nueva categoría" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void addCategory(); } }} /><button type="button" className="secondary" onClick={addCategory}>Agregar</button></div></div><div className="category-table-head"><span>Categoría</span><span>Este mes</span><span /></div><div className="category-rows">{categories.map(category => <CategoryRow key={category.id} category={category} />)}{!categories.length && <div className="empty-state"><strong>Aún no tienes categorías activas.</strong><span>Agrega una para empezar a darle un propósito a tu dinero.</span></div>}</div></section></AppShell></RouteGate>;
+  return <RouteGate gate="ready"><AppShell title="Presupuesto" subtitle="Decide qué hará tu dinero este mes."><section className="budget-toolbar"><button type="button" className="icon-button" aria-label="Mes anterior" onClick={() => app.setMonth(shiftMonth(app.month, -1))}>←</button><div><small>Mes de planificación</small><strong>{monthLabel(app.month)}</strong></div><button type="button" className="icon-button" aria-label="Mes siguiente" onClick={() => app.setMonth(shiftMonth(app.month, 1))}>→</button></section>{app.pendingIncomes.length > 0 && <section className="attention-card"><div><p className="section-kicker">Dinero por confirmar</p><h2>Tienes {app.pendingIncomes.length} ingreso{app.pendingIncomes.length > 1 ? 's' : ''} pendiente{app.pendingIncomes.length > 1 ? 's' : ''}</h2><p>Ya están en tus cuentas, pero todavía no están disponibles para asignar.</p></div><a className="button-link" href="/transactions">Revisar ingresos</a></section>}<section className="budget-hero"><div className="rta-card"><small>Disponible para asignar</small><strong className={(app.summary?.rta.amountMinor ?? 0) < 0 ? 'negative' : ''}>{formatMoney(app.summary?.rta.amountMinor ?? 0)}</strong><p>{(app.summary?.rta.amountMinor ?? 0) > 0 ? 'Este dinero aún no tiene una categoría.' : 'Tu dinero disponible ya tiene un propósito.'}</p></div><div className="metric-card"><small>Saldo total en cuentas</small><strong>{formatMoney(app.summary?.accountBalanceMinor ?? 0)}</strong><span>{app.activeAccounts.length} cuenta{app.activeAccounts.length === 1 ? '' : 's'} activa{app.activeAccounts.length === 1 ? '' : 's'}</span></div><div className="metric-card"><small>Asignado este mes</small><strong>{formatMoney(app.summary?.rta.assignedMinor ?? 0)}</strong><span>{categories.length} categorías activas</span></div></section><section className="card budget-categories"><div className="section-heading"><div><p className="section-kicker">Tu plan</p><h2>Categorías</h2><p className="muted">Ajusta cada prioridad directamente donde la ves.</p></div><div className="quick-add"><input aria-label="Nombre de nueva categoría" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="Nueva categoría" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void addCategory(); } }} /><button type="button" className="secondary" onClick={addCategory}>Agregar</button></div></div><div className="category-table-head"><span>Categoría</span><span>Este mes</span><span /></div><div className="category-rows">{categories.map(category => <CategoryRow key={category.id} category={category} />)}{!categories.length && <div className="empty-state"><strong>Aún no tienes categorías activas.</strong><span>Agrega una para empezar a darle un propósito a tu dinero.</span></div>}</div></section>{archivedTargets.length > 0 && <section className="card budget-categories"><details className="archived-targets"><summary>Categorías archivadas con objetivo</summary><p className="muted">Estas categorías están archivadas. Su objetivo se muestra sólo como referencia y no admite asignaciones.</p><div className="category-rows">{archivedTargets.map(category => <article key={category.id} className="category-row muted-row" data-testid={`archived-target-${category.id}`}><div className="category-main"><div><strong>{category.name}</strong><small>Archivada · objetivo conservado</small></div><div className="category-values"><span><small>Asignado</small>{formatMoney(category.assignedMinor)}</span><span className={category.availableMinor < 0 ? 'negative' : ''}><small>Disponible</small>{formatMoney(category.availableMinor)}</span></div></div><TargetState category={category} showDisclosure={showsTargetDisclosure(app.month, app.today.slice(0, 7), category.target)} /></article>)}</div></details></section>}</AppShell></RouteGate>;
 }

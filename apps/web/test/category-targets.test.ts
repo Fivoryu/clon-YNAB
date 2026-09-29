@@ -30,13 +30,28 @@ test('target presentation stays in the category context and confirmation uses th
   assert.match(budget, /app\.assign\(category\.id, target\.remainingMinor\)/);
   assert.match(budget, /kind === 'MONTHLY_SET_ASIDE' \? \{ kind, amountMinor \} : \{ kind, amountMinor, targetMonth \}/);
   assert.match(budget, /!category\.archived && target\.remainingMinor > 0/);
-  assert.match(budget, /const showTargetDisclosure = app\.month < app\.today\.slice\(0, 7\) \|\| \(target\?\.kind === 'BALANCE_BY_DATE' && app\.month < target\.targetMonth\)/, 'the disclosure must cover any past month for every target kind, not only a dated target before its month');
-  assert.match(budget, /\{showTargetDisclosure && <p className="target-disclosure">/);
+  assert.match(budget, /const showTargetDisclosure = showsTargetDisclosure\(app\.month, app\.today\.slice\(0, 7\), target\)/);
+  assert.match(models, /export function showsTargetDisclosure\(viewedMonth: string, currentMonth: string, target: CategoryTargetState \| undefined\): boolean \{\s*return viewedMonth < currentMonth \|\| \(target\?\.kind === 'BALANCE_BY_DATE' && viewedMonth < target\.targetMonth\);/, 'the disclosure must cover any past month for every target kind, not only a dated target before its month');
+  assert.match(budget, /\{showDisclosure && <p className="target-disclosure">/);
   assert.match(budget, /no se conserva el historial del objetivo/);
   assert.match(budget, /className="target-suggestion"/);
   assert.match(budget, /Confirmar asignación/);
   for (const label of ['Apartado mensual', 'Saldo para una fecha', 'Monto objetivo', 'Progreso', 'Falta', 'Estado']) assert.ok(budget.includes(label), `missing Spanish label: ${label}`);
   assert.match(budget, /Se muestra la definición actual/);
+});
+
+test('an archived category target stays readable and offers no action', () => {
+  assert.match(budget, /details className="archived-targets"/);
+  assert.match(budget, /filter\(c => c\.archived && c\.target\)/, 'only archived categories that actually have a target are listed');
+  assert.match(budget, /data-testid=\{`archived-target-\$\{category\.id\}`\}/);
+  assert.match(budget, /Archivada · objetivo conservado/);
+  assert.match(budget, /no admite asignaciones/);
+  const archivedBlock = budget.slice(budget.indexOf('details className="archived-targets"'), budget.indexOf('</AppShell>'));
+  assert.ok(archivedBlock.length > 0, 'the archived disclosure must be present');
+  assert.doesNotMatch(archivedBlock, /target-suggestion/, 'an archived target must not offer a suggestion');
+  assert.doesNotMatch(archivedBlock, /Confirmar asignación/, 'an archived target must not offer a confirmation');
+  assert.doesNotMatch(archivedBlock, /<button/, 'an archived target must render no action at all');
+  assert.match(archivedBlock, /<TargetState category=\{category\} showDisclosure=\{showsTargetDisclosure\(app\.month, app\.today\.slice\(0, 7\), category\.target\)\} \/>/, 'the archived target reuses the same read-only state renderer');
 });
 
 test('target suggestion is visually separate from Ready to Assign and collapses on compact layouts', () => {

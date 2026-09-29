@@ -4,7 +4,7 @@
 
 This document defines the functional contract for the academic YNAB-style budgeting clone. It turns the accepted MVP boundary and the actor/use-case catalogue into stable, reviewable requirements without claiming parity with the commercial product or knowledge of its private schema, formulas, or implementation.
 
-The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support posted/working state only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Broader MVP behavior remains documented for later slices: other account types, splits, transfers, ordinary edit/delete flows, reconciliation, cleared or pending state, overspending variants, refunds/reimbursements/returns, targets, scheduled transactions, and advanced credit-card behavior.
+The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support posted/working state only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Broader MVP behavior remains documented for later slices: other account types, splits, transfers, ordinary edit/delete flows, reconciliation, cleared or pending state, overspending variants, refunds/reimbursements/returns, scheduled transactions, and advanced credit-card behavior.
 
 For the bounded first slice, the budget engine is authoritative for `Ready to Assign`, `Assigned`, `Activity`, `Available`, positive rollover, and their derived summaries. Later-slice overspending classifications and special formulas remain questions in [Budget engine research](../research/budget-engine.md#open-questions); this document does not silently choose them.
 
@@ -309,10 +309,10 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 ## FR-TARGET — Category targets and target status
 
 - **ID:** FR-TARGET
-- **Name:** Define deferred category targets
-- **Priority:** P2
+- **Name:** Define category targets
+- **Priority:** P2 (delivered)
 - **Related actor:** Authenticated user; Budget system/engine.
-- **Description:** **Observed:** Public guidance describes category targets for set-aside, refill, and balance-by-period needs. **Clone decision:** A future target feature shall represent a planning instruction and may show a suggestion/status; it shall not create money or assign it automatically.
+- **Description:** **Observed:** Public guidance describes category targets for set-aside, refill, and balance-by-period needs. **Clone decision:** A target represents a planning instruction and may show a suggestion/status; it does not create money and never assigns it automatically. **Clone decision:** The category targets phase delivered two kinds: a monthly amount to set aside, measured on the month's Assigned amount so carried-over money cannot satisfy it, and a total balance to reach by a budget month, measured on the month's Available amount. Target state is visible in the Budget view and the monthly summary, and deliberately absent from the single-month report and the multi-month series.
 - **Preconditions:** The user is authorized; the category exists; target type, amount, and period are valid under the future target policy.
 - **Expected flow:**
   1. The user creates or edits a target on a category.
@@ -322,8 +322,8 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 - **Business rules:**
   - **Clone decision:** Targets belong to exactly one category and are not account balances, assignments, or transactions.
   - **Clone decision:** Creating/evaluating a target does not change RTA, Assigned, Activity, Available, or account balances.
-  - **Clone decision:** The feature is deferred P2 and is not required for the first vertical slice.
-  - **Open question:** MVP target subset, carryover, partial months, skipped periods, overspending, and suggestion timing remain unresolved in [budget-engine research](../research/budget-engine.md#open-questions).
+  - **Clone decision:** The feature is delivered. The monthly-set-aside and balance-by-date kinds are implemented, and a suggestion requires an explicit confirmed assignment through the existing assignment command.
+  - **Open question:** Weekly, annual, and custom rhythms, refill behaviour, snooze, more than one target per category, and target history or versioning remain unresolved and are not supported. Carryover, partial months, skipped periods, overspending, and suggestion timing remain unresolved for any future kind in [budget-engine research](../research/budget-engine.md#open-questions).
 - **Possible errors:** Missing/archived category → `NOT_FOUND` or `VALIDATION_ERROR`; invalid target type/period/amount → `VALIDATION_ERROR`; conflicting target state → `CONFLICT`; unsupported target behavior → explicit deferred/unsupported result; calculation failure → `INTERNAL_ERROR`.
 - **Acceptance criteria:**
   - **Given** a valid target definition **When** it is saved **Then** it is linked to the category and does not change any monetary balance.

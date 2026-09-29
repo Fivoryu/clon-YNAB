@@ -190,7 +190,7 @@ RTA = realized opening cash
 
 ### P2 — planning automation
 
-- Targets and target status/suggestions.
+- Category targets and target status/suggestions: delivered in the category targets phase, with the two supported kinds and an explicit confirmed assignment. See FR-TARGET.
 - Scheduled and repeating transactions.
 
 **Observed YNAB behavior:** Targets belong to categories and scheduled entries do not affect the plan before occurrence.
@@ -562,13 +562,13 @@ The scenarios below use the same template. “Actor” identifies the initiating
 
 ## Deferred use cases
 
-### DU-01 — Targets and target status
+### DU-01 — Targets and target status (delivered)
 
 - **Actor:** Authenticated user; budget engine calculates status.
 - **Priority:** P2.
 - **Goal:** Express a desired category state such as set-aside, refill, or balance-by-period and show a suggested amount or shortfall.
-- **Reason deferred:** Targets add planning semantics and date/period rules after the core ledger and allocation loop are trustworthy.
-- **Boundary:** **Observed YNAB behavior:** targets belong to categories and target types differ. **Clone decision:** a target is a planning instruction, not money, an assignment, or a transaction; evaluating it must not change balances. **Open question:** MVP target subset, carryover, partial months, skipped months, and suggestion timing.
+- **Reason delivered:** The clone now keeps the core ledger and allocation loop trustworthy, and the category targets phase added the first bounded target kinds on top of them.
+- **Boundary:** **Observed YNAB behavior:** targets belong to categories and target types differ. **Clone decision:** a target is a planning instruction, not money, an assignment, or a transaction; evaluating it does not change balances. **Delivered:** a monthly amount to set aside, measured on the month's Assigned amount, and a total balance by a budget month, measured on the month's Available amount; a status of met, underfunded, or overdue; and a suggestion that requires an explicit confirmed assignment. **Still open:** weekly, annual, and custom rhythms, refill behaviour, snooze, more than one target per category, target history or versioning, and suggestion timing.
 
 ### DU-02 — Scheduled and repeating transactions
 

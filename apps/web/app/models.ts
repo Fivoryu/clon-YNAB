@@ -30,6 +30,15 @@ export type CategoryTargetState =
   | (CategoryTargetProgress & { kind: 'MONTHLY_SET_ASIDE' })
   | (CategoryTargetProgress & { kind: 'BALANCE_BY_DATE'; targetMonth: string });
 
+/**
+ * No target history is retained, so a target shown for any month other than the current one is today's
+ * definition rather than the definition in force then. A dated target adds its own case: while the viewed
+ * month precedes its target month, the definition shown is the current one too.
+ */
+export function showsTargetDisclosure(viewedMonth: string, currentMonth: string, target: CategoryTargetState | undefined): boolean {
+  return viewedMonth < currentMonth || (target?.kind === 'BALANCE_BY_DATE' && viewedMonth < target.targetMonth);
+}
+
 export type CategoryTargetInput =
   | { kind: 'MONTHLY_SET_ASIDE'; amountMinor: number }
   | { kind: 'BALANCE_BY_DATE'; amountMinor: number; targetMonth: string };

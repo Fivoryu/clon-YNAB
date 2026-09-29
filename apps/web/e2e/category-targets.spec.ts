@@ -160,3 +160,35 @@ test('owners manage targets in context and confirm a distinct suggestion by keyb
   const visibleText = await page.getByRole('main').innerText();
   expect(visibleText).not.toMatch(/MONTHLY_SET_ASIDE|BALANCE_BY_DATE|amountMinor|targetMonth|progressMinor|remainingMinor|UNDERFUNDED|OVERDUE/);
 });
+
+test('an archived category keeps its target readable with no actionable suggestion', async ({ page }) => {
+  const budget = await seedBudget(page);
+  const food = budget.categories.find(category => category.name === 'Comida')!;
+  page.on('dialog', dialog => void dialog.accept());
+  await page.goto('/budget');
+
+  const foodRow = page.getByTestId(`category-${food.id}`);
+  await foodRow.getByRole('button', { name: 'Definir objetivo' }).click();
+  await foodRow.getByLabel('Tipo de objetivo').selectOption('MONTHLY_SET_ASIDE');
+  await foodRow.getByLabel('Monto objetivo').fill('50.00');
+  await foodRow.getByRole('button', { name: 'Guardar objetivo' }).click();
+  await expect(foodRow.locator('.target-state')).toContainText('Apartado mensual');
+
+  await foodRow.getByRole('button', { name: 'Opciones de Comida' }).click();
+  await foodRow.getByRole('button', { name: 'Archivar' }).click();
+  await expect(page.getByTestId(`category-${food.id}`)).toHaveCount(0, { timeout: 15_000 });
+
+  const disclosure = page.locator('details.archived-targets');
+  await expect(disclosure).toBeVisible();
+  await disclosure.locator('summary').click();
+  const archivedRow = page.getByTestId(`archived-target-${food.id}`);
+  await expect(archivedRow).toBeVisible();
+  await expect(archivedRow).toContainText('Archivada · objetivo conservado');
+  const archivedState = archivedRow.locator('.target-state');
+  await expect(archivedState).toContainText('Apartado mensual');
+  await expect(archivedState).toContainText('Monto objetivo');
+  await expect(archivedState).toContainText('Falta');
+  await expect(archivedState).toContainText('Estado');
+  await expect(archivedRow.locator('.target-suggestion')).toHaveCount(0, { timeout: 5000 });
+  await expect(archivedRow.getByRole('button')).toHaveCount(0, { timeout: 5000 });
+});

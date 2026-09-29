@@ -185,7 +185,48 @@ A new browser case covers the requirement directly: a set-aside target is set, t
 - `npm run test:e2e` **12 passed**, 0 failed.
 - `npm test` with the database: 160 passed, 0 failed, 0 skipped.
 
+## Work Unit 3b — Archived target readability and product documents
+
+**Note on provenance:** this unit was implemented by the parent orchestrator inline, because the `gentle-ai-worker` subagent stalled and reported an error before writing anything. The repository was verified untouched after that failure. This is a routing deviation recorded rather than hidden.
+
+### What was delivered
+
+- An archived-category disclosure in the Budget view, following the existing archived-accounts pattern, listing only archived categories that actually HAVE a target. It renders the target state through the same read-only renderer the active rows use, and it contains no suggestion, no confirmation, and no action of any kind, because the server rejects target changes on an archived category.
+- A single source of truth for the disclosure rule: `showsTargetDisclosure(viewedMonth, currentMonth, target)` in `apps/web/app/models.ts`. The active panel and the archived disclosure now share it instead of repeating the condition.
+- The three product-scope documents updated so targets are no longer described as deferred, recording what was delivered and what remains open.
+
+### Exact document statements changed
+
+| Document | Before | After |
+| --- | --- | --- |
+| `functional-requirements.md` FR-TARGET | Name said "deferred category targets"; priority P2; the Clone decision deferred the feature and left the subset open | Name no longer says deferred; priority `P2 (delivered)`; the Clone decision records the two delivered kinds and their progress bases, and lists what is still open |
+| `functional-requirements.md` broader-MVP paragraph | Listed targets among behavior deferred to later slices | Targets removed from that list |
+| `mvp-scope.md` out-of-scope list | Targets and scheduled transactions deferred together | Targets delivered; scheduled and repeating transactions remain deferred |
+| `mvp-scope.md` decision record | Listed targets among the deferred concepts | Targets removed from that list |
+| `mvp-scope.md` invariants and delivery slices | Targets and scheduled transactions deferred; targets as a second milestone | Targets delivered and never creating money automatically; scheduled transactions remain the later milestone |
+| `actors-and-use-cases.md` P2 list | Targets and target status listed as P2 planning automation | Recorded as delivered, with scheduled transactions still deferred |
+| `actors-and-use-cases.md` DU-01 | Titled as a deferred use case with a "reason deferred" and an open subset question | Titled as delivered, with a "reason delivered" and an explicit list of what remains open |
+
+### TDD evidence
+
+| Task | Test file(s) | Layer | RED | GREEN | TRIANGULATE |
+|---|---|---|---|---|---|
+| 13 | `apps/web/test/category-targets.test.ts`, `apps/web/e2e/category-targets.spec.ts` | Node source contract plus real browser | The new source assertion failed against the page before the disclosure existed | The archived disclosure test passes and asserts the block has no suggestion, no confirmation, and no button at all | The browser case archives a category that has a target and asserts the disclosure is reachable, the target readable, and no actionable control present |
+| 14-16 | Same | Same | Covered above | `npm run test:web` 53 passed; `npm run test:e2e` 13 passed | Keyboard opening of the disclosure and compact-layout rendering are covered by the disclosure element and existing responsive rules |
+
+### Verification evidence
+
+- `npm run test:web` 53 passed, 0 failed.
+- `npm run typecheck:web` clean; `npm run build:web` compiled successfully with `/budget` generated.
+- `npm run test:e2e` **13 passed**, 0 failed.
+- `npm test` with the database: 160 passed, 0 failed, 0 skipped.
+- `apps/web/tsconfig.tsbuildinfo` restored to its committed bytes after every command that rewrote it.
+
+### Choices and limits
+
+- Archived categories WITHOUT a target are not listed at all, rather than listed with a statement that they have no target. The disclosure exists to make an existing target readable; listing untargeted archived categories would duplicate the accounts view for no requirement.
+- A met target on an archived category is not separately asserted in the browser. The read-only renderer is the same one the active panel uses, and its status values are covered there, so this is a coverage limit rather than a behaviour gap.
+
 ## Remaining work
 
-- Work Unit 3b (tasks 13-16) is not started: archived-category target readability in the Budget view, and the three product-scope documents.
-- The parent-owned gates remain open.
+- The implementation tasks are complete. The parent-owned gates remain open, and the change is not yet archived.

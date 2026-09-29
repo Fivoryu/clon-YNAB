@@ -220,8 +220,8 @@ small { color: var(--muted); }
 .account-history-error { background: var(--danger-soft); border: 1px solid #ebcbc6; border-radius: 10px; color: #78352e; padding: 12px 14px; }
 .account-history-empty { margin: 14px 18px 20px; }
 .account-not-found { margin-top: 12px; }
-.archived-accounts { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 14px; }
-.archived-accounts summary { color: var(--muted); cursor: pointer; font-size: .86rem; font-weight: 720; }
+.archived-accounts, .archived-targets { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 14px; }
+.archived-accounts summary, .archived-targets summary { color: var(--muted); cursor: pointer; font-size: .86rem; font-weight: 720; }
 .muted-row { opacity: .7; }
 
 /* Reports */
