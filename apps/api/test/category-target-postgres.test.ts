@@ -7,7 +7,7 @@ import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
 
 const enabled = Boolean(process.env.DATABASE_URL);
 const options = (idempotencyKey: string, expectedVersion: number) => ({ idempotencyKey, expectedVersion });
-const withoutVersion = ({ version: _version, ...summary }: Record<string, any>) => summary;
+const withoutVersion = ({ version: _version, ...summary }: Record<string, any>) => ({ ...summary, categories: summary.categories.map(({ target: _target, ...category }: Record<string, any>) => category) });
 
 test('PostgreSQL category targets persist with their loaded snapshot, receipt version, and financial invariants', { skip: !enabled }, async () => {
   const { PrismaClient } = await import('@prisma/client');

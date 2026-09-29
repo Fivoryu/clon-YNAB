@@ -47,6 +47,67 @@ Measured against the commit base, Work Unit 1's implementation delta is **368 ch
 
 ## Remaining work
 
-- Work Unit 2 (tasks 5-8) is not started. It must also add the target property to the `CategorySummary` OpenAPI schema, because the summary response is the surface that carries target state.
-- Work Unit 3 (tasks 9-12) is not started.
+- Work Unit 2 (tasks 5–8) is complete; its evidence is appended below.
+- Work Unit 3 (tasks 9–12) is not started.
 - The parent-owned gates remain open.
+
+---
+
+## Work Unit 2 — Derivation and summary projection
+Scope: tasks 5–8 only. The financial engine and report projection modules remain unchanged; no web files changed.
+
+### TDD evidence
+| Phase | Exact command | Observed output |
+|---|---|---|
+| RED | `node --experimental-strip-types --test apps/api/test/category-target-projection.test.ts apps/api/test/openapi.test.ts` | `# tests 12\n# suites 0\n# pass 6\n# fail 6\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1102.0583` (exit 1). The missing derivation module, target summary projection, and OpenAPI target-state schema were the intended failures. |
+| GREEN | `node --experimental-strip-types --test apps/api/test/category-target-projection.test.ts apps/api/test/category-target-api.test.ts apps/api/test/category-target-postgres.test.ts apps/api/test/openapi.test.ts` | `# tests 18\n# suites 0\n# pass 17\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0\n# duration_ms 1466.379` (exit 0; PostgreSQL test skipped because DATABASE_URL was unset). |
+| TRIANGULATE | `unset DATABASE_URL && npm test` | `# tests 160\n# suites 0\n# pass 137\n# fail 0\n# cancelled 0\n# skipped 23\n# todo 0\n# duration_ms 5350.0807` (exit 0; database-gated tests skipped). |
+| REFACTOR | `node --experimental-strip-types --test apps/api/test/category-target-projection.test.ts apps/api/test/category-target-api.test.ts apps/api/test/monthly-report-api.test.ts apps/api/test/multi-month-report-api.test.ts apps/api/test/openapi.test.ts` | `# tests 36\n# suites 0\n# pass 35\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0\n# duration_ms 2000.9301` (exit 0; only the PostgreSQL report-mode case skipped). |
+
+### Required command output
+| Exact command | Exact observed result |
+|---|---|
+| `unset DATABASE_URL && npm test` | `# tests 160\n# suites 0\n# pass 137\n# fail 0\n# cancelled 0\n# skipped 23\n# todo 0\n# duration_ms 5350.0807` (exit 0). |
+| `DATABASE_URL='postgresql://ynab:ynab_local@localhost:5434/ynab_dev' npm test` | `# tests 160\n# suites 0\n# pass 160\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 8136.962` (exit 0). |
+| `DATABASE_URL='postgresql://ynab:ynab_local@localhost:5434/ynab_dev' npm run db:validate` | `> db:validate\n> prisma validate --schema apps/api/prisma/schema.prisma\n\nPrisma schema loaded from apps\\api\\prisma\\schema.prisma\n┌─────────────────────────────────────────────────────────┐\n│  Update available 6.19.0 -> 8.0.0-rc.19                 │\n│                                                         │\n│  This is a major update - please follow the guide at    │\n│  https://pris.ly/d/major-version-upgrade                │\n│                                                         │\n│  Run the following to update                            │\n│    npm i --save-dev prisma@latest                       │\n│    npm i @prisma/client@latest                          │\n└─────────────────────────────────────────────────────────┘\nThe schema at apps\\api\\prisma\\schema.prisma is valid 🚀` (exit 0). |
+
+### Changed files and line counts (additions/deletions)
+- `apps/api/src/planning/targets.ts`: +35 (new pure derivation).
+- `apps/api/src/reports/report-service.ts`: +7/-2 (attach state only in summary categories).
+- `apps/api/openapi.yaml`: +2/-1 (state DTO and nullable CategorySummary.target).
+- `apps/api/test/category-target-projection.test.ts`: +139 (derivation, projection, report-separation, and financial-invariant coverage).
+- `apps/api/test/category-target-api.test.ts`: +4/-4 (compare financial values independently of derived target presentation).
+- `apps/api/test/category-target-postgres.test.ts`: +1/-1 (same financial-only comparison for PostgreSQL coverage).
+- `apps/api/test/openapi.test.ts`: +5/-3 (target-state schema contract).
+- `openspec/changes/add-category-targets/tasks.md`: +4/-4 (checked only tasks 5–8).
+- `openspec/changes/add-category-targets/apply-progress.md`: +43/-2 (appended WU2 evidence and reconciled the remaining-work note).
+
+Estimate: 240 insertions and 17 deletions (257 changed lines including this record), under the 400-line Work Unit 2 budget by 143 lines. The report endpoints call their separate `projectMonthlyReport` / `projectMultiMonthReport` projections; `ReportService.read` is shared by summary and dashboard only. Tests confirm neither HTTP report response contains target, targetMonth, progressMinor, or remainingMinor keys.
+
+Implemented formulas: set-aside progress = monthly assignedMinor; dated progress = monthly availableMinor; remainingMinor = max(0, amountMinor - progressMinor); status = MET if progress >= amount, else OVERDUE only for a dated targetMonth < requestedMonth, else UNDERFUNDED.
+
+Financial invariant evidence: the before/set/remove snapshot test compares RTA, each category's assigned/activity/available, aggregate and per-account balances, financial-event count, and assignment identities. Setting/removing adds no assignment; PostgreSQL target coverage also asserts financial event counts are unchanged.
+
+Ambiguity and resolution: target history is not retained, so the current definition is derived against each requested month's values. A category without a target omits the runtime `target` property (no synthetic null state); the optional OpenAPI property uses the existing Budget.account nullable/allOf idiom. Set-aside output omits targetMonth. No semantics were inferred beyond the validated design.
+
+Deviation: CodeGraph exploration timed out; route ownership was verified from the scoped source files instead. No other deviation. No commit or push.
+
+---
+
+## Parent-owned independent verification and hardening (appended)
+
+An independent read-only verification returned **no candidate-caused blocker** and confirmed the derivation, the summary-only wiring, the report separation at the HTTP boundary, the financial invariant with real before/after comparisons, and the OpenAPI addition. Four follow-ups were raised; three were closed here.
+
+| Follow-up | Resolution |
+| --- | --- |
+| `CategorySummary.target` was marked `nullable: true`, but the projection emits no such property for an untargeted category and never an explicit null. | The nullable marker was removed from the summary property, so the contract now says the property is omitted rather than nullable. The mutation result keeps `nullable: true`, because removal genuinely returns an explicit null there. The existing assertion was updated to pin both contracts separately, which is more precise than before. |
+| No test vector for the overdue comparison across a year boundary, so a mutant comparing only the month suffix would have passed. | Added a `2025-12` target viewed from `2026-01`, asserting overdue, with the reason recorded in the assertion message. |
+| The summary projection fixture had `assignedMinor` equal to `availableMinor`, so swapping the progress basis would not have been detected by that test. | Added a spending event so the two differ, asserted both values explicitly, and confirmed the dated target's progress follows the available amount. |
+| The report-separation HTTP test recognises a fixed set of target-like field names, so a differently named payload could evade it. | Recorded as a residual limit. It is mitigated elsewhere: the report response shapes are key-locked by their own suites, and the report projectors are separate modules that never read targets. |
+
+### Verification evidence reproduced by the parent
+
+- `npm test` with the database: **160 tests, 160 passed, 0 failed, 0 skipped**.
+- `npm test` without the database: 160 tests, 137 passed, 0 failed, 23 skipped.
+- `npm run test:web` 48 passed; `npm run typecheck:web` clean.
+- Changed-line total: **257** against Work Unit 2's forecast of 200-280 and the 400-line budget, before the hardening above.

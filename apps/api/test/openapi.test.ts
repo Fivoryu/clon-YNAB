@@ -44,7 +44,7 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
     for (const error of errors) assert.match(block, new RegExp(`#/components/responses/${error}`), `${method.toUpperCase()} ${path} is missing ${error}`);
   }
   for (const parameter of ['BudgetId', 'CategoryId', 'IncomeId', 'TransactionId', 'Month', 'MonthOptional', 'RequestId', 'IdempotencyKey', 'IfMatch']) assert.match(document, new RegExp(`^    ${parameter}:`, 'm'), `missing shared parameter ${parameter}`);
-  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
+  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetState', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
   assert.match(document, /cookieAuth:[\s\S]*?in: cookie[\s\S]*?name: sid/);
   assert.match(document, /X-Request-ID/);
   const requestIdSchemas = [...document.matchAll(/requestId: \{([^}]*)\}/g)].map(([_, schema]) => schema);
@@ -74,13 +74,15 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
   assert.match(document, /transfer[\s\S]*?reconciliation[\s\S]*?unsupported/i);
 });
 
-test('OpenAPI documents target kinds, conditional months, and null removal results', () => {
+test('OpenAPI documents target kinds, conditional months, summary state, and null removal results', () => {
   const block = operationBlock('/api/v1/budgets/{budgetId}/categories/{categoryId}/target', 'put');
   assert.match(block, /IdempotencyKey/);
   assert.match(block, /RequiredIfMatch/);
   assert.match(block, /CategoryTargetInput/);
   assert.match(document, /CategoryTargetInput:[\s\S]*MONTHLY_SET_ASIDE[\s\S]*BALANCE_BY_DATE[\s\S]*targetMonth/);
-  assert.match(document, /CategoryTargetResult:[\s\S]*target:[^\n]*nullable: true/);
+  assert.match(document, /CategoryTargetResult:[^\n]*target:[^\n]*nullable: true/);
+  assert.match(document, /CategoryTargetState:[\s\S]*progressMinor:[^\n]*type: integer[\s\S]*remainingMinor:[^\n]*minimum: 0[\s\S]*status:[^\n]*MET, UNDERFUNDED, OVERDUE/);
+  assert.match(document, /CategorySummary:[^\n]*target: \{ allOf: \[\{ \$ref: '#\/components\/schemas\/CategoryTargetState' \}\] \}/, 'an untargeted category omits the property entirely, so the summary target is not nullable');
 });
 
 test('OpenAPI documents the bounded multi-account and transfer contract', () => {

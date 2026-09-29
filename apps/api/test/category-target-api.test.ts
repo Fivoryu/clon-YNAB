@@ -12,7 +12,7 @@ const setup = () => {
 };
 const options = (idempotencyKey: string, expectedVersion: number) => ({ idempotencyKey, expectedVersion });
 const expectApiError = (promise: Promise<unknown>, code: ApiError['code']) => assert.rejects(promise, (error: unknown) => error instanceof ApiError && error.code === code);
-const withoutVersion = ({ version: _version, ...summary }: Record<string, any>) => summary;
+const financialValues = ({ version: _version, ...summary }: Record<string, any>) => ({ ...summary, categories: summary.categories.map(({ target: _target, ...category }: Record<string, any>) => category) });
 
 test('category targets can be set, replaced, replayed, and removed without changing financial values', async () => {
   const { app, token, budget, categoryId, ownerId, financialStore } = setup();
@@ -26,15 +26,15 @@ test('category targets can be set, replaced, replayed, and removed without chang
   assert.deepEqual(set.data, { categoryId, target: definition, version: beforeState.version + 1 });
   assert.deepEqual((await app.setCategoryTarget(token, budget.id, categoryId, definition, undefined, options('target-set', beforeState.version))).data, set.data);
   const afterSet = (await app.getFinancialSummary(token, budget.id, '2026-02')).data; const afterSetState = await financialStore.load(ownerId, budget.id);
-  assert.deepEqual(withoutVersion(afterSet), withoutVersion(before)); assert.equal(afterSet.version, before.version + 1); assert.equal(afterSetState.events.length, beforeState.events.length);
+  assert.deepEqual(financialValues(afterSet), financialValues(before)); assert.equal(afterSet.version, before.version + 1); assert.equal(afterSetState.events.length, beforeState.events.length);
   const replacement = { kind: 'BALANCE_BY_DATE', amountMinor: 900, targetMonth: '2026-03' };
   const replaced = await app.setCategoryTarget(token, budget.id, categoryId, replacement, undefined, options('target-replace', afterSetState.version));
   assert.deepEqual(replaced.data.target, replacement); assert.equal(replaced.data.version, afterSetState.version + 1);
-  assert.deepEqual(withoutVersion((await app.getFinancialSummary(token, budget.id, '2026-02')).data), withoutVersion(before));
+  assert.deepEqual(financialValues((await app.getFinancialSummary(token, budget.id, '2026-02')).data), financialValues(before));
   const removed = await app.removeCategoryTarget(token, budget.id, categoryId, undefined, options('target-remove', replaced.data.version));
   const afterRemove = (await app.getFinancialSummary(token, budget.id, '2026-02')).data; const afterRemoveState = await financialStore.load(ownerId, budget.id);
   assert.deepEqual(removed.data, { categoryId, target: null, version: replaced.data.version + 1 });
-  assert.deepEqual(withoutVersion(afterRemove), withoutVersion(before)); assert.equal(afterRemove.version, before.version + 3);
+  assert.deepEqual(financialValues(afterRemove), financialValues(before)); assert.equal(afterRemove.version, before.version + 3);
   assert.equal(afterRemoveState.events.length, beforeState.events.length); assert.deepEqual(afterRemoveState.targets, []);
 });
 

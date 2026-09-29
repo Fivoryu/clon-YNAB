@@ -1,13 +1,14 @@
 import { calculateAccountBalances, calculateCategory, calculateRta, positiveRollover, type AccountState } from '../planning/engine.ts';
 import type { FinancialEvent, FinancialState } from '../persistence/financial-store.ts';
 import { foldEffectiveHistory } from '../planning/transaction-history.ts';
+import { projectTargetState } from '../planning/targets.ts';
 
 export type FinancialSummary = {
   month: string;
   accountBalanceMinor: number;
   accounts: ReturnType<typeof calculateAccountBalances>;
   rta: ReturnType<typeof calculateRta>;
-  categories: (FinancialState['categories'][number] & ReturnType<typeof calculateCategory>)[];
+  categories: (FinancialState['categories'][number] & ReturnType<typeof calculateCategory> & { target?: ReturnType<typeof projectTargetState> })[];
   version: number;
 };
 
@@ -20,7 +21,11 @@ export class ReportService {
     const spending = events.filter(e => e.kind === 'SPENDING').reduce((sum, e) => sum + e.amountMinor, 0);
     const prior = this.categoryCarry(state, requestedMonth, events);
     const assigned = events.filter(e => e.month === requestedMonth && (e.kind === 'ASSIGNMENT' || e.kind === 'UNASSIGNMENT')).reduce((sum, e) => sum + (e.kind === 'ASSIGNMENT' ? e.amountMinor : -e.amountMinor), 0);
-    const categories = state.categories.map(category => ({ ...category, ...this.categoryValues(state, category.id, requestedMonth, events) }));
+    const categories = state.categories.map(category => {
+      const values = this.categoryValues(state, category.id, requestedMonth, events);
+      const target = state.targets?.find(candidate => candidate.categoryId === category.id);
+      return { ...category, ...values, ...(target ? { target: projectTargetState(target, values, requestedMonth) } : {}) };
+    });
     const sourceAccounts: AccountState[] = state.accounts ?? (state.account ? [{ ...state.account, kind: 'CASH', archived: state.account.archived ?? false }] : []);
     const accounts = calculateAccountBalances(sourceAccounts, events.filter(event => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'].includes(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN', amountMinor: event.amountMinor })));
     const openingBalanceMinor = sourceAccounts.reduce((sum, account) => sum + account.openingBalanceMinor, 0);
