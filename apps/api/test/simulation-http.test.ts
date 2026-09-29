@@ -46,9 +46,10 @@ const body = (response: Response) => response.json() as Promise<any>;
   const started = await body(startRun);
   assert.equal(started.data.run.state, 'CONNECTING');
   assert.equal(started.data.simulationRevision, 1);
+  assert.equal(started.data.replayed, undefined);
 
   const replay = await fetch(`${root}/runs/${runId}/start`, { method: 'POST', headers: headers(token, { 'idempotency-key': 'start-http', 'if-match': '0' }), body: '{}' });
-  assert.deepEqual((await body(replay)).data, started.data);
+  assert.deepEqual((await body(replay)).data, { ...started.data, replayed: true });
 
   const advance = await fetch(`${root}/runs/${runId}/advance`, { method: 'POST', headers: headers(token, { 'idempotency-key': 'advance-http', 'if-match': '1' }), body: '{}' });
   assert.equal(advance.status, 200);

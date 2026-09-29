@@ -26,8 +26,9 @@ test('in-memory store enforces owner scope and canonical SHA-256 idempotency dig
   await assert.rejects(() => store.listProfiles('foreign-owner', budgetId), (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'NOT_FOUND');
   const first = await create(store);
   assert.equal(first.run.state, 'DISCONNECTED');
+  assert.equal(first.replayed, undefined);
   const replay = await create(store);
-  assert.deepEqual(replay, first);
+  assert.deepEqual(replay, { ...first, replayed: true });
   await assert.rejects(() => store.createRun({ ownerId, budgetId, profileCode: 'BO_INSPIRED_A', fixtureVersion: '2026-01', seed: 'different-seed', idempotencyKey: 'create-1', actorId: ownerId, requestId: 'conflict-request', clock: () => 1_700_000_000_000 }), (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'CONFLICT');
   await assert.rejects(() => store.loadRun({ ownerId: 'foreign-owner', budgetId, runId: first.run.runId! }), (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'NOT_FOUND');
 });
@@ -47,8 +48,9 @@ test('in-memory store serializes commands, clones projections, and preserves rep
   const rejected = first.ok ? second : first;
   assert.equal(rejected.ok, false);
   if (!rejected.ok) assert.ok(rejected.error instanceof SimulationPersistenceError && rejected.error.code === 'CONFLICT');
+  assert.equal(accepted.replayed, undefined);
   const replay = await advance(store, runId, 'advance-1', 1);
-  assert.deepEqual(replay, accepted);
+  assert.deepEqual(replay, { ...accepted, replayed: true });
   const loaded = await store.loadRun({ ownerId, budgetId, runId });
   loaded.state = 'SUCCEEDED';
   assert.notEqual((await store.loadRun({ ownerId, budgetId, runId })).state, 'SUCCEEDED');
@@ -92,7 +94,8 @@ test('BudgetApp orchestrates owner-scoped simulation controls without financial 
   const created = (await app.createSimulationRun(owner, budget.id, { profileCode: 'BO_INSPIRED_A', fixtureVersion: '2026-01', seed: 'app-seed' }, 'app-create', 'create-app')).data;
   const started = (await app.startSimulationRun(owner, budget.id, created.run.runId!, 'app-start', { idempotencyKey: 'start-app', expectedRevision: 0 })).data;
   assert.equal(started.run.state, 'CONNECTING');
-  assert.deepEqual((await app.startSimulationRun(owner, budget.id, created.run.runId!, 'different-request', { idempotencyKey: 'start-app', expectedRevision: 0 })).data, started);
+  assert.equal(started.replayed, undefined);
+  assert.deepEqual((await app.startSimulationRun(owner, budget.id, created.run.runId!, 'different-request', { idempotencyKey: 'start-app', expectedRevision: 0 })).data, { ...started, replayed: true });
   await assert.rejects(() => app.advanceSimulationRun(owner, budget.id, created.run.runId!, 'stale-request', { idempotencyKey: 'stale-app', expectedRevision: 0 }), (error: any) => error.code === 'CONFLICT');
   await assert.rejects(() => app.getSimulationRun(foreign, budget.id, created.run.runId!), (error: any) => error.code === 'NOT_FOUND');
   await assert.rejects(() => app.getSimulationCandidates(owner, budget.id, '00000000-0000-4000-8000-000000000000'), (error: any) => error.code === 'NOT_FOUND');

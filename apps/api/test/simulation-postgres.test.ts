@@ -7,6 +7,7 @@ import { PrismaSimulationStore, SimulationPersistenceError } from '../src/persis
 import { FinancialStore } from '../src/persistence/financial-store.ts';
 import { ReportService } from '../src/reports/report-service.ts';
 import { serializeTransactionCsv } from '../src/planning/csv.ts';
+import { getSimulationProfile, listSimulationProfiles } from '../src/simulation/catalog.ts';
 
 const postgresEnabled = Boolean(process.env.DATABASE_URL);
 const prisma = postgresEnabled ? new (await import('@prisma/client')).PrismaClient() : null;
@@ -35,9 +36,9 @@ const cleanup = async (budgetId: string, ownerId: string) => {
   await prisma.$executeRaw`DELETE FROM "SimulationCandidateEvent" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulationCandidate" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulatedRecord" WHERE "budgetId" = ${budgetId}::uuid`;
+  await prisma.$executeRaw`DELETE FROM "SimulationAuditEntry" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulationCheckpoint" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulationAttempt" WHERE "budgetId" = ${budgetId}::uuid`;
-  await prisma.$executeRaw`DELETE FROM "SimulationAuditEntry" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulationRun" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "SimulationScope" WHERE "budgetId" = ${budgetId}::uuid`;
   await prisma.$executeRaw`DELETE FROM "Budget" WHERE "id" = ${budgetId}::uuid`;
@@ -55,6 +56,34 @@ const createFixture = async () => {
 const createCommand = (ownerId: string, budgetId: string, key: string, profileCode = 'BO_INSPIRED_A') => ({
   ownerId, budgetId, profileCode, fixtureVersion: '2026-01', seed: 'postgres-seed',
   idempotencyKey: key, actorId: ownerId, requestId: `${key}-request`, clock: () => 1_700_000_000_000,
+});
+
+test('PostgreSQL simulation profiles use the code catalog and reject catalog drift', { skip: !postgresEnabled }, async () => {
+  const { ownerId, budgetId } = await createFixture();
+  const store = new PrismaSimulationStore(prisma!);
+  try {
+    const rows = await prisma!.simulationProfile.findMany({ where: { enabled: true }, orderBy: [{ code: 'asc' }, { fixtureVersion: 'asc' }] });
+    const catalogProfiles = listSimulationProfiles();
+    assert.deepEqual(rows.map(row => ({ code: row.code, displayLabel: row.displayLabel, description: row.description, fixtureVersion: row.fixtureVersion, enabled: row.enabled })), catalogProfiles);
+    assert.deepEqual(await store.listProfiles(ownerId, budgetId), catalogProfiles);
+    for (const row of rows) {
+      const catalogProfile = getSimulationProfile(row.code, row.fixtureVersion);
+      assert.notDeepEqual(row.fixture, catalogProfile.fixture, `${row.code}/${row.fixtureVersion} must retain the stale seeded fixture for this guard`);
+      const resolved = await (store as unknown as { profile(tx: unknown, code: string, fixtureVersion: string): Promise<unknown> }).profile(prisma!, row.code, row.fixtureVersion);
+      assert.deepEqual(resolved, catalogProfile);
+    }
+
+    const driftCode = 'BO_UNKNOWN_DRIFT';
+    await prisma!.simulationProfile.create({ data: { code: driftCode, fixtureVersion: '2026-01', displayLabel: 'Unknown drift', description: 'Test-only drift row', fixture: {}, enabled: true } });
+    try {
+      await assert.rejects(
+        () => store.createRun(createCommand(ownerId, budgetId, 'catalog-drift', driftCode)),
+        (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'VALIDATION_ERROR' && error.message.includes(driftCode) && error.message.includes('2026-01'),
+      );
+    } finally {
+      await prisma!.simulationProfile.delete({ where: { code_fixtureVersion: { code: driftCode, fixtureVersion: '2026-01' } } });
+    }
+  } finally { await cleanup(budgetId, ownerId); }
 });
 
 const financialSnapshot = async (ownerId: string, budgetId: string) => {
@@ -94,8 +123,9 @@ test('PostgreSQL store commits owner-scoped simulation state and replays receipt
     const store = new PrismaSimulationStore(prisma!);
     const created = await store.createRun(createCommand(ownerId, budgetId, 'create-1'));
     const started = await store.execute({ ...createCommand(ownerId, budgetId, 'start-1'), runId: created.run.runId, command: 'START', expectedRevision: 0 });
+    assert.equal(started.replayed, undefined);
     const replay = await store.execute({ ...createCommand(ownerId, budgetId, 'start-1'), runId: created.run.runId, command: 'START', expectedRevision: 0 });
-    assert.deepEqual(replay, started);
+    assert.deepEqual(replay, { ...started, replayed: true });
     await assert.rejects(() => store.execute({ ...createCommand(ownerId, budgetId, 'start-1'), runId: created.run.runId, command: 'ADVANCE', expectedRevision: 0 }), (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'CONFLICT');
     await assert.rejects(() => store.loadRun({ ownerId: randomUUID(), budgetId, runId: created.run.runId! }), (error: unknown) => error instanceof SimulationPersistenceError && error.code === 'NOT_FOUND');
     assert.equal(await prisma!.simulationAttempt.count({ where: { budgetId } }), 1);
@@ -109,15 +139,17 @@ test('PostgreSQL simulation commands remain financially neutral across failure, 
     const store = new PrismaSimulationStore(prisma!);
     const before = await financialSnapshot(ownerId, budgetId);
     const created = await store.createRun(createCommand(ownerId, budgetId, 'neutral-create'));
-    const started = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-start'), runId: created.run.runId, command: 'START', expectedRevision: 0 });
-    const lostResponse = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-advance'), runId: created.run.runId, command: 'ADVANCE', expectedRevision: started.simulationRevision });
-    const replay = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-advance'), runId: created.run.runId, command: 'ADVANCE', expectedRevision: started.simulationRevision });
-    assert.deepEqual(replay, lostResponse);
-
     const memory = new InMemorySimulationStore([{ ownerId, budgetId }]);
     const memoryCreated = await memory.createRun(createCommand(ownerId, budgetId, 'normalized-memory-create'));
-    let memoryRevision = memoryCreated.simulationRevision;
+    const started = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-start'), runId: created.run.runId, command: 'START', expectedRevision: 0 });
+    const memoryStarted = await memory.execute({ ...createCommand(ownerId, budgetId, 'normalized-memory-start'), runId: memoryCreated.run.runId, command: 'START', expectedRevision: memoryCreated.simulationRevision });
+    const lostResponse = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-advance'), runId: created.run.runId, command: 'ADVANCE', expectedRevision: started.simulationRevision });
+    assert.equal(lostResponse.replayed, undefined);
+    const replay = await store.execute({ ...createCommand(ownerId, budgetId, 'neutral-advance'), runId: created.run.runId, command: 'ADVANCE', expectedRevision: started.simulationRevision });
+    assert.deepEqual(replay, { ...lostResponse, replayed: true });
+    let memoryRevision = memoryStarted.simulationRevision;
     let durableRevision = lostResponse.simulationRevision;
+    memoryRevision = (await memory.execute({ ...createCommand(ownerId, budgetId, 'normalized-memory-advance'), runId: memoryCreated.run.runId, command: 'ADVANCE', expectedRevision: memoryRevision })).simulationRevision;
     for (const [index, command] of (['ADVANCE', 'ADVANCE'] as const).entries()) {
       memoryRevision = (await memory.execute({ ...createCommand(ownerId, budgetId, `normalized-memory-${index}`), runId: memoryCreated.run.runId, command, expectedRevision: memoryRevision })).simulationRevision;
       durableRevision = (await store.execute({ ...createCommand(ownerId, budgetId, `neutral-more-${index}`), runId: created.run.runId, command, expectedRevision: durableRevision })).simulationRevision;
@@ -202,7 +234,7 @@ test('PostgreSQL restart/rebuild preserves exact isolated rows and financial ver
       assert.equal(await restartedClient.commandReceipt.count({ where: { budgetId } }), before.financialVersion);
     } finally { await restartedClient.$disconnect(); }
   } finally {
-    if (prisma) { const { PrismaClient } = await import('@prisma/client'); const cleanupClient = new PrismaClient(); try { await cleanupClient.$executeRaw`DELETE FROM "SimulationCommandReceipt" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCandidateEvent" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCandidate" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulatedRecord" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCheckpoint" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationAttempt" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationAuditEntry" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationRun" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationScope" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "Budget" WHERE "id" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "User" WHERE "id" = ${ownerId}::uuid`; } finally { await cleanupClient.$disconnect(); } }
+    if (prisma) { const { PrismaClient } = await import('@prisma/client'); const cleanupClient = new PrismaClient(); try { await cleanupClient.$executeRaw`DELETE FROM "SimulationCommandReceipt" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCandidateEvent" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCandidate" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulatedRecord" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationAuditEntry" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationCheckpoint" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationAttempt" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationRun" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "SimulationScope" WHERE "budgetId" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "Budget" WHERE "id" = ${budgetId}::uuid`; await cleanupClient.$executeRaw`DELETE FROM "User" WHERE "id" = ${ownerId}::uuid`; } finally { await cleanupClient.$disconnect(); } }
   }
 });
 
