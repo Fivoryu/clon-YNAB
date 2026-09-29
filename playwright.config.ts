@@ -5,7 +5,11 @@ const reuseExistingServer = !process.env.CI;
 
 export default defineConfig({
   testDir: './apps/web/e2e',
-  timeout: 30_000,
+  timeout: 45_000,
+  // The suite runs against `next dev`, which compiles a route on demand the first time the client
+  // navigates to it. On a cold cache that compile can take several seconds, so the default 5s
+  // assertion timeout made the first navigation to a not-yet-compiled route fail intermittently.
+  expect: { timeout: 15_000 },
   workers: 1,
   reporter: 'list',
   use: {

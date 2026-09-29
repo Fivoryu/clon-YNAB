@@ -257,6 +257,40 @@ test.describe('multi-month report surface', () => {
     await start.fill('2026-07');
     await expect(main.getByRole('alert')).toContainText('Test range failure.');
     await expect(page.locator('.report-summary-table, .report-chart, .report-month-detail, .report-period-total')).toHaveCount(0);
+    await expect(main.getByRole('status')).toHaveCount(0);
+
+    await page.unroute(/\/api\/v1\/budgets\/[^/]+\/reports\/monthly\?from=/);
+    await main.getByRole('button', { name: 'Reintentar' }).click();
+    await expect(summary.locator('tbody tr')).toHaveCount(4, { timeout: 15_000 });
+    await expect(main.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('renders an all-empty range with explicit zeros and no pending-release total', async ({ page }) => {
+    await seedReadyBudget(page);
+    await page.goto('/reports/trends');
+    const start = page.getByLabel('Mes de inicio');
+    const end = page.getByLabel('Mes de fin');
+    await start.fill('2026-01');
+    await end.fill('2026-03');
+
+    const main = page.getByRole('main');
+    await expect(main.getByRole('alert')).toHaveCount(0);
+    const summary = page.getByRole('table', { name: /Resumen mensual/ });
+    await expect(summary.locator('tbody tr')).toHaveCount(3, { timeout: 15_000 });
+    for (const index of [0, 1, 2]) {
+      expect(await readMinor(summary.locator('tbody tr').nth(index).locator('td').nth(0))).toBe(0);
+      expect(await readMinor(summary.locator('tbody tr').nth(index).locator('td').nth(1))).toBe(0);
+    }
+
+    const period = page.locator('.report-period-total');
+    await expect(period).toContainText(/solo medidas de flujo/i);
+    await expect(period).not.toContainText(/pendiente de liberar/i);
+    expect(await readMinor(period.getByText(/Ingresos del periodo/i).locator('..').locator('dd'))).toBe(0);
+    expect(await readMinor(period.getByText(/Gastos del periodo/i).locator('..').locator('dd'))).toBe(0);
+
+    const chartValues = page.getByRole('img', { name: /ingresos y gastos por mes/i }).locator('.report-chart-value');
+    await expect(chartValues).toHaveCount(6);
+    for (const index of [0, 1, 2, 3, 4, 5]) expect(await readMinor(chartValues.nth(index))).toBe(0);
   });
 });
 
