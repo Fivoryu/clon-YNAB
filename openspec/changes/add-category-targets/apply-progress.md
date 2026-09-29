@@ -111,3 +111,81 @@ An independent read-only verification returned **no candidate-caused blocker** a
 - `npm test` without the database: 160 tests, 137 passed, 0 failed, 23 skipped.
 - `npm run test:web` 48 passed; `npm run typecheck:web` clean.
 - Changed-line total: **257** against Work Unit 2's forecast of 200-280 and the 400-line budget, before the hardening above.
+
+---
+
+## Work Unit 3a — Target presentation, management, and confirmation
+Scope: tasks 9–12 only. No API or product-document changes; archived-category presentation remains in Work Unit 3b.
+
+### Strict TDD evidence
+| Phase | Exact command | Exact observed result |
+|---|---|---|
+| RED | `node --experimental-strip-types --test apps/web/test/category-targets.test.ts` | `# tests 4`; `# pass 0`; `# fail 4`; exit 1. The missing summary type, request, presentation, and styles were the intended failures. |
+| RED | `npm run test:e2e -- apps/web/e2e/category-targets.spec.ts` | Exit 1; the browser test timed out waiting for the not-yet-implemented `Definir objetivo` action (`180000ms`). |
+| GREEN | `node --experimental-strip-types --test apps/web/test/category-targets.test.ts` | `# tests 4`; `# pass 4`; `# fail 0`; exit 0. |
+| GREEN | `npm run test:e2e -- apps/web/e2e/category-targets.spec.ts` | `1 passed`; exit 0. |
+| TRIANGULATE | `npm run test:e2e` | `12 passed`; exit 0. The target journey verifies no-target and positive-gap states, met and overdue dates, a negative Ready to Assign, exact mutation payloads/headers, keyboard confirmation, refresh, removal, and compact layout. |
+| REFACTOR | Required validations below | All five required commands passed. The state now labels progress and its measurement basis explicitly; no contract semantics changed. |
+
+### Required validation — exact command and result output
+| Exact command | Exact observed output/result |
+|---|---|
+| `npm run test:web` | `1..52`; `# tests 52`; `# suites 0`; `# pass 52`; `# fail 0`; `# cancelled 0`; `# skipped 0`; `# todo 0`; `# duration_ms 270.8576` (exit 0). |
+| `npm run typecheck:web` | `> typecheck:web` / `> tsc -p apps/web/tsconfig.json --noEmit`; no diagnostics (exit 0). |
+| `npm run build:web` | `✓ Compiled successfully in 6.4s`; `✓ Generating static pages (13/13)`; all listed routes built (exit 0). |
+| `npm run test:e2e` | `12 passed (1.9m)` (exit 0; includes the new target browser test). |
+| `DATABASE_URL='postgresql://ynab:ynab_local@localhost:5434/ynab_dev' npm test` | `1..160`; `# tests 160`; `# suites 0`; `# pass 160`; `# fail 0`; `# cancelled 0`; `# skipped 0`; `# todo 0`; `# duration_ms 9260.9929` (exit 0). |
+
+Typecheck rewrote the tracked `apps/web/tsconfig.tsbuildinfo`; it was restored from `HEAD` without a Git restore command. `git hash-object` and `git rev-parse HEAD:apps/web/tsconfig.tsbuildinfo` both returned `612855aa83b7ec6abdc9b185327763b867856ba9`; `git status --porcelain apps/web/tsconfig.tsbuildinfo` was empty.
+
+### Changed files and line counts
+- `apps/web/app/budget/page.tsx`: +56/−3.
+- `apps/web/app/models.ts`: +16.
+- `apps/web/app/hooks/useBudgetApp.ts`: +18/−1.
+- `apps/web/app/globals.css`: +19.
+- `apps/web/test/category-targets.test.ts`: +45 (new).
+- `apps/web/e2e/category-targets.spec.ts`: +154 (new).
+- `openspec/changes/add-category-targets/tasks.md`: this unit checked only tasks 9–12 (+4/−4); the existing re-scope edits were preserved.
+- `openspec/changes/add-category-targets/apply-progress.md`: +45 (this cumulative record).
+
+### Treatment, ambiguity, and deviations
+The suggestion is a separately styled amber panel, labelled “Sugerencia”; its copy says it is not part of “Disponible para asignar” and will not apply without confirmation. Preview opens an inline keyboard-accessible confirmation; only “Confirmar asignación” calls the existing `app.assign(category.id, target.remainingMinor)` path. That path supplies a fresh idempotency key and the current version, then syncs summary values from the server. The browser test confirms the assignment request, negative Ready to Assign remains visible, and refreshed target progress/status changes to met.
+
+The target month is shown in localized Spanish. A new dated target starts with no month preselected; the owner must choose one rather than inherit an invented default. The no-history disclosure appears exactly when the selected budget month precedes the dated target month (`app.month < target.targetMonth`); set-aside targets have no month field or disclosure. Progress labels name the validated measurement basis (“Apartado este mes” or “Saldo actual”). Categories without a target render no state or suggestion, though the “Definir objetivo” action remains available. The Budget view still filters archived categories; no archived surface was introduced.
+
+Superseded pre-existing assertion: **none**. No existing assertion was changed, weakened, deleted, or relaxed. No deviation from the validated contract or scope. Focused iterations added an explicit progress label after the first source check, and corrected only new-test expectations for Spanish capitalization and the final discriminated union. The initial browser RED is recorded above; final focused and full browser suites pass.
+
+Changed-line estimate: **312** implementation and test lines; **320** including the four task checkbox transitions. The full WU3a change set is 388 lines including this 45-line record and 23 lines of previously present task-plan re-scope; it remains under the roughly 400-line pause threshold. No commit or push.
+
+---
+
+## Parent-owned independent verification and hardening (appended)
+
+An independent read-only verification established **no candidate-caused blocker** and reported the implementation and test delta as exactly 312 changed lines, matching the writer. It confirmed the rendered target state in context, that an untargeted category shows no target state, that the target writes carry the idempotency key and current version and send exactly the fields the chosen kind requires (the set-aside payload was observed to contain only `kind` and `amountMinor`), that the suggestion appears only with a positive gap, that the confirmation reaches the existing assignment command with a fresh key and current version and no assignment happens before it, and that no pre-existing assertion was changed.
+
+One finding was a genuine failure of the requirement as written, and it was the item the parent specifically asked the verifier to scrutinise:
+
+**The past-month disclosure did not cover a monthly set-aside target.** The condition was `target.kind === 'BALANCE_BY_DATE' && app.month < target.targetMonth`, so a `MONTHLY_SET_ASIDE` target never showed the disclosure even while the owner was viewing a past month, and a dated target showed it based on the target month rather than on the viewed month being past. The requirement is that a target shown while viewing a past month is accompanied by the disclosure, and no target history is retained, so any past month shows today's definition for either kind.
+
+Resolution: the condition is now a computed flag that is true when the viewed month precedes the current month, for ANY target kind, and remains true in the dated case the previous condition already covered. The previous behaviour is preserved, the missing case is covered, and the source-contract assertion was strengthened to pin BOTH rules and to assert that the element renders from that computed flag. No assertion was superseded.
+
+A second hardening: the browser assertion that an untargeted category shows no suggestion used to check only that the suggestion count was zero, which passes even when the row itself is missing. It now asserts the row exists first, so the absence of a suggestion means something.
+
+A new browser case covers the requirement directly: a set-aside target is set, the current month is confirmed to show no disclosure, the budget is moved to the previous month, and the disclosure is asserted visible and then the month is restored.
+
+### Findings recorded as follow-ups, not blockers
+
+- **Selected-month race, pre-existing.** The budget hook stores every summary response without checking that it is still for the selected month, so concurrent month changes can complete out of order and the rendered target progress can belong to another month. The month-dependent category values already had this exposure before targets existed; targets make it visible rather than cause it. No browser assertion exercises the race.
+- **Browser coverage gaps.** The suite does not assert an overdrawn category row and its negative available value, nor the absence of target state across every selected month, only the initial one.
+- **Double confirmation.** The confirmation path is guarded by the current version and a fresh idempotency key, and the server's budget lock plus version comparison prevent two stale-version requests from both committing, but a rapid double-click case is not exercised in the browser.
+
+### Verification evidence reproduced by the parent
+
+- `npm run test:web` 52 passed, 0 failed; `npm run typecheck:web` clean; `npm run build:web` compiled and generated 13 of 13 static pages.
+- `npm run test:e2e` **12 passed**, 0 failed.
+- `npm test` with the database: 160 passed, 0 failed, 0 skipped.
+
+## Remaining work
+
+- Work Unit 3b (tasks 13-16) is not started: archived-category target readability in the Budget view, and the three product-scope documents.
+- The parent-owned gates remain open.

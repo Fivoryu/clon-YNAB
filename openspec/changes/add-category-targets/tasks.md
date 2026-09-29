@@ -8,10 +8,14 @@ Execution status: Proposal approved 2026-09-29 and specs validated. The owner au
 |-------|-------|
 | Estimated changed lines | 750-1,010 authored additions across schema, migration, API, web, tests, and the authorized scope-document update |
 | 400-line budget risk | High |
-| Chained PRs recommended | Yes, three slices |
-| Suggested split | WU1 (definition, persistence, commands) then WU2 (derivation and summary projection) then WU3 (presentation, confirmation, browser coverage, documents) |
+| Chained PRs recommended | Yes, four slices |
+| Suggested split | WU1 (definition, persistence, commands) then WU2 (derivation and summary projection) then WU3a (presentation, target management, confirmation, browser coverage) then WU3b (archived target readability and product documents) |
 | Delivery strategy | ask-on-risk; no commit or push requested by these tasks |
-| Chain strategy | Three review slices; each must be re-estimated and must pause for re-scoping if it exceeds 400 |
+| Chain strategy | Four review slices; each must be re-estimated and must pause for re-scoping if it exceeds 400 |
+
+### Re-scope recorded during apply
+
+The original plan had three slices with a single Work Unit 3 estimated at 300-400 lines. Before writing any code, that unit was measured at 410-500 lines and the owner chose to split it rather than proceed above the budget. Two facts drove the overage: the browser coverage is mandatory rather than optional, and the Budget view currently lists only active categories, so making an archived category's target readable requires a surface that did not previously exist. Work Unit 1 measured 368 changed lines against a 250-330 forecast and Work Unit 2 measured 257 against a 200-280 forecast; both are recorded rather than restated.
 
 The estimate is high because this phase introduces persisted state and a migration, where the last phase had neither, and because browser coverage is a requirement. The last three phases each had at least one slice exceed its forecast, so these ranges are deliberately wide and no slice may absorb another.
 
@@ -42,14 +46,23 @@ The estimate is high because this phase introduces persisted state and a migrati
 7. [x] **TRIANGULATE:** Strengthen the tests to prove the invariant end to end: RTA, Assigned, Activity, Available, balance values, and event counts are identical before and after setting and after removing a target; no assignment exists without a confirmation; and a category without a target reports no target state in any month. <!-- sdd-owner: implementation -->
 8. [x] **REFACTOR:** Refine the derivation and projection without changing semantics; run `npm test` without and with the documented database URL and record each exact result. <!-- sdd-owner: implementation -->
 
-## Work unit 3 — Presentation, confirmation, and documents
+## Work unit 3a — Target presentation, management, and confirmation
 
-**Depends on:** Work unit 2's summary projection. **Boundary:** `apps/web/app/budget/page.tsx`, `apps/web/app/models.ts`, `apps/web/app/hooks/useBudgetApp.ts`, `apps/web/app/globals.css`, tests under `apps/web/test/` and `apps/web/e2e/`, and the authorized update to `docs/product/functional-requirements.md`, `docs/product/mvp-scope.md`, and `docs/product/actors-and-use-cases.md`. Roll back the web changes and the document update together.
+**Depends on:** Work unit 2's summary projection. **Boundary:** `apps/web/app/budget/page.tsx`, `apps/web/app/models.ts`, `apps/web/app/hooks/useBudgetApp.ts`, `apps/web/app/globals.css`, and tests under `apps/web/test/` and `apps/web/e2e/`. Roll back the web changes together; the API and the derivation are unaffected.
 
-9. [ ] **RED:** Add failing web tests for a targeted category presenting its kind, amount, target month where applicable, progress, remaining gap, and status in category context; a suggestion offered only for an active category with a positive gap; the confirmation invoking the existing assignment command; no target state for a category without a target; no actionable suggestion for an archived category; the past-month disclosure; and the absence of implementation terminology. Add real browser coverage for the same, including a confirmation that refreshes the displayed values. <!-- sdd-owner: implementation -->
-10. [ ] **GREEN:** Implement the presentation, the suggestion, and the confirmation, plus the Spanish copy and the past-month disclosure. Route the confirmation through the existing assignment command with a fresh idempotency key and the current version. <!-- sdd-owner: implementation -->
-11. [ ] **TRIANGULATE:** Strengthen the browser coverage for an archived category, a met target, an overdue dated target, a negative Ready to Assign alongside a suggestion, keyboard operation of the confirmation, and compact-layout rendering. Assert in the rendered DOM that no report surface presents target state. <!-- sdd-owner: implementation -->
-12. [ ] **REFACTOR:** Refine the presentation while keeping it tied to the contract, update the three product-scope documents to stop deferring targets and to record the resolved questions, then run `npm run test:web`, `npm run typecheck:web`, `npm run build:web`, and the browser suite, and record each exact result. <!-- sdd-owner: implementation -->
+9. [x] **RED:** Add failing web tests for a targeted category presenting its kind, amount, target month where applicable, progress, remaining gap, and status in category context; setting, replacing, and removing a target from that context, sending exactly the fields the chosen kind requires and never a target month for the set-aside kind; a suggestion offered only for an active category with a positive gap; the confirmation invoking the existing assignment command; no target state for a category without a target; the past-month disclosure; and the absence of implementation terminology. Add real browser coverage for the same flows, including a confirmation that refreshes the displayed values. <!-- sdd-owner: implementation -->
+10. [x] **GREEN:** Implement the presentation, target management, the suggestion, and the confirmation, plus the Spanish copy and the past-month disclosure. Route the confirmation through the existing assignment command with a fresh idempotency key and the current version, and keep the suggestion visibly distinct from Ready to Assign. <!-- sdd-owner: implementation -->
+11. [x] **TRIANGULATE:** Strengthen the browser coverage for a met target, an overdue dated target, a negative Ready to Assign alongside a suggestion, keyboard operation of the confirmation, replacing and removing a target, and compact-layout rendering. <!-- sdd-owner: implementation -->
+12. [x] **REFACTOR:** Refine the presentation while keeping it tied to the contract; run `npm run test:web`, `npm run typecheck:web`, `npm run build:web`, and the browser suite, and record each exact result. <!-- sdd-owner: implementation -->
+
+## Work unit 3b — Archived target readability and product documents
+
+**Depends on:** Work unit 3a's presentation. **Boundary:** `apps/web/app/budget/page.tsx`, `apps/web/app/globals.css`, tests under `apps/web/test/` and `apps/web/e2e/`, and the authorized update to `docs/product/functional-requirements.md`, `docs/product/mvp-scope.md`, and `docs/product/actors-and-use-cases.md`. This unit exists because the Budget view currently lists only active categories, so an archived category's target is not reachable at all. Roll back this unit at the archived-disclosure boundary.
+
+13. [ ] **RED:** Add failing tests for an archived category keeping its target readable from the Budget view with no actionable suggestion, and for the product documents no longer describing targets as deferred. Add real browser coverage for the archived case. <!-- sdd-owner: implementation -->
+14. [ ] **GREEN:** Add the archived-category disclosure to the Budget view, rendering any target read-only and offering no assignment action, and update the three product-scope documents to stop deferring targets and to record the questions this phase resolved. <!-- sdd-owner: implementation -->
+15. [ ] **TRIANGULATE:** Strengthen the coverage for an archived category with no target, an archived category whose target is met, reopening the disclosure by keyboard, and the document statements that previously deferred targets. <!-- sdd-owner: implementation -->
+16. [ ] **REFACTOR:** Refine the archived disclosure and the documents; run `npm run test:web`, `npm run typecheck:web`, `npm run build:web`, and the browser suite, and record each exact result. <!-- sdd-owner: implementation -->
 
 ## Parent-owned post-apply gates
 

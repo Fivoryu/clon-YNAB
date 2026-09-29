@@ -144,6 +144,20 @@ small { color: var(--muted); }
 .category-actions { display: flex; gap: 7px; justify-content: flex-end; }
 .inline-panel { background: var(--soft); border-radius: 12px; display: grid; gap: 9px; margin: 0 14px 14px; max-width: 600px; padding: 14px; }
 .category-manage { margin-left: auto; max-width: 440px; }
+.target-context { display: grid; gap: 10px; margin: 0 14px 14px; }
+.target-state { background: #f8fbf8; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.target-state h3 { margin-bottom: 12px; }
+.target-state dl { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin: 0; }
+.target-state dt { color: var(--muted); font-size: .78rem; font-weight: 720; }
+.target-state dd { font-variant-numeric: tabular-nums; font-weight: 780; margin: 3px 0 0; }
+.target-disclosure { border-top: 1px solid var(--line); color: var(--muted); font-size: .84rem; line-height: 1.5; margin: 12px 0 0; padding-top: 10px; }
+.target-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.target-editor { margin: 0; max-width: 600px; width: 100%; }
+.target-suggestion { align-items: center; background: #fff5e7; border: 1px solid #efd7ad; border-radius: 12px; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto; padding: 14px; }
+.target-suggestion p { margin: 0; }
+.target-suggestion .section-kicker { margin-bottom: 5px; }
+.target-confirmation { align-items: center; border-top: 1px solid #efd7ad; display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; padding-top: 12px; }
+.target-confirmation p { flex-basis: 100%; }
 
 /* Transactions */
 .history-card { padding: 0; overflow: hidden; }
@@ -312,6 +326,11 @@ small { color: var(--muted); }
   .category-main { align-items: flex-start; grid-template-columns: 1fr auto; padding: 14px 6px; }
   .category-values { grid-column: 1 / -1; grid-row: 2; }
   .category-actions { grid-column: 2; grid-row: 1; }
+  .target-context { margin-left: 6px; margin-right: 6px; }
+  .target-state dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .target-suggestion { grid-template-columns: 1fr; }
+  .target-suggestion > button, .target-confirmation button { width: 100%; }
+  .target-confirmation { grid-column: auto; }
   .quick-add { grid-template-columns: 1fr; width: 100%; }
   .section-heading { align-items: stretch; flex-direction: column; }
   .history-toolbar { align-items: stretch; flex-direction: column; }

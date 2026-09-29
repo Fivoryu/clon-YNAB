@@ -5,6 +5,7 @@ import type {
   Account,
   AccountHistoryState,
   Budget,
+  CategoryTargetInput,
   CommandResult,
   CsvDiagnostic,
   CsvImportResult,
@@ -366,6 +367,22 @@ export function useBudgetApp() {
   const createCategory = (name: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }, 'Categoría creada.');
   const renameCategory = (categoryId: string, name: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories/${categoryId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }, 'Categoría renombrada.');
   const archiveCategory = (categoryId: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories/${categoryId}/archive`, { method: 'POST' }, 'Categoría archivada.');
+  const changeCategoryTarget = async (categoryId: string, target: CategoryTargetInput | null) => {
+    if (!budget) return null;
+    setBusy(true); setNotice(null);
+    try {
+      const result = await apiCall<{ version: number }>(`/api/v1/budgets/${budget.id}/categories/${categoryId}/target`, {
+        method: target ? 'PUT' : 'DELETE',
+        headers: { ...(target ? { 'content-type': 'application/json' } : {}), 'Idempotency-Key': crypto.randomUUID(), 'If-Match': `W/"${budget.version}"` },
+        ...(target ? { body: JSON.stringify(target) } : {}),
+      });
+      setBudget(current => current ? { ...current, version: result.version } : current);
+      setNotice({ kind: 'success', text: target ? 'Objetivo actualizado.' : 'Objetivo eliminado.' });
+      await sync({ ...budget, version: result.version }, month, historyFilters);
+      return result;
+    } catch (error) { setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo actualizar el objetivo.' }); return null; }
+    finally { setBusy(false); }
+  };
 
   const applyHistoryFilters = async (filters: HistoryFilters) => {
     setHistoryFilters(filters);
@@ -414,7 +431,7 @@ export function useBudgetApp() {
     activeCategories, activeAccounts, pendingIncomes, today: today(),
     authenticate, signOut, saveSetupAccount, saveSetupCategories, setMonth, refresh: sync,
     assign, unassign, move, recordIncome, recordSpending, recordTransfer, releaseIncome,
-    createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory,
+    createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory, changeCategoryTarget,
     applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
     readMonthlyReport, readReportRange, reportRange,
     editTransaction, deleteTransaction, exportCsv, importCsv,

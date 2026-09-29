@@ -19,11 +19,27 @@ export type Budget = {
   categories: Category[];
 };
 
+type CategoryTargetProgress = {
+  amountMinor: number;
+  progressMinor: number;
+  remainingMinor: number;
+  status: 'MET' | 'UNDERFUNDED' | 'OVERDUE';
+};
+
+export type CategoryTargetState =
+  | (CategoryTargetProgress & { kind: 'MONTHLY_SET_ASIDE' })
+  | (CategoryTargetProgress & { kind: 'BALANCE_BY_DATE'; targetMonth: string });
+
+export type CategoryTargetInput =
+  | { kind: 'MONTHLY_SET_ASIDE'; amountMinor: number }
+  | { kind: 'BALANCE_BY_DATE'; amountMinor: number; targetMonth: string };
+
 export type CategorySummary = Category & {
   carryoverMinor: number;
   assignedMinor: number;
   activityMinor: number;
   availableMinor: number;
+  target?: CategoryTargetState;
 };
 
 export type Summary = {

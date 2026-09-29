@@ -4,9 +4,9 @@ import { useMemo, useState } from 'react';
 import { AppShell } from '../components/shell/AppShell';
 import { RouteGate } from '../components/shell/RouteGate';
 import { MoneyInput } from '../components/ui/MoneyInput';
-import { formatMoney, parseMoneyToMinor } from '../lib/money';
+import { formatMoney, minorToInput, parseMoneyToMinor } from '../lib/money';
 import { useBudget } from '../providers/BudgetAppProvider';
-import type { CategorySummary } from '../models';
+import type { CategorySummary, CategoryTargetInput } from '../models';
 
 function shiftMonth(month: string, delta: number) {
   const [year, m] = month.split('-').map(Number); const date = new Date(Date.UTC(year, m - 1 + delta, 1)); return date.toISOString().slice(0, 7);
@@ -15,11 +15,67 @@ function monthLabel(month: string) {
   const [year, m] = month.split('-').map(Number); return new Intl.DateTimeFormat('es-BO', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, m - 1, 1)));
 }
 
+function CategoryTargetPanel({ category }: { category: CategorySummary }) {
+  const app = useBudget(); const target = category.target;
+  const [editing, setEditing] = useState(false); const [confirming, setConfirming] = useState(false);
+  const [kind, setKind] = useState<CategoryTargetInput['kind']>(target?.kind ?? 'MONTHLY_SET_ASIDE');
+  const [amount, setAmount] = useState(target ? minorToInput(target.amountMinor) : '');
+  const [targetMonth, setTargetMonth] = useState(target?.kind === 'BALANCE_BY_DATE' ? target.targetMonth : '');
+  const openEditor = () => { setKind(target?.kind ?? 'MONTHLY_SET_ASIDE'); setAmount(target ? minorToInput(target.amountMinor) : ''); setTargetMonth(target?.kind === 'BALANCE_BY_DATE' ? target.targetMonth : ''); setConfirming(false); setEditing(true); };
+  // No target history is retained, so anything shown for a month that is not the current one is today's definition.
+  // A dated target adds its own case: while the viewed month precedes its target month, the definition shown is the current one too.
+  const showTargetDisclosure = app.month < app.today.slice(0, 7) || (target?.kind === 'BALANCE_BY_DATE' && app.month < target.targetMonth);
+  const saveTarget = async () => {
+    try {
+      const amountMinor = parseMoneyToMinor(amount);
+      if (kind === 'BALANCE_BY_DATE' && !targetMonth) throw new Error('Elige un mes objetivo.');
+      const input: CategoryTargetInput = kind === 'MONTHLY_SET_ASIDE' ? { kind, amountMinor } : { kind, amountMinor, targetMonth };
+      if (await app.changeCategoryTarget(category.id, input)) setEditing(false);
+    } catch (error) { app.setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Monto inválido.' }); }
+  };
+  const removeTarget = async () => { if (await app.changeCategoryTarget(category.id, null)) setConfirming(false); };
+  const confirmAssignment = async () => { if (target && await app.assign(category.id, target.remainingMinor)) setConfirming(false); };
+  const showSuggestion = Boolean(target && !category.archived && target.remainingMinor > 0);
+  return <div className="target-context" data-testid={`target-context-${category.id}`}>
+    {target && <section className="target-state" aria-label={`Objetivo de ${category.name}`}>
+      <h3>{target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado mensual' : 'Saldo para una fecha'}</h3>
+      <dl><div><dt>Monto objetivo</dt><dd>{formatMoney(target.amountMinor)}</dd></div>
+        {target.kind === 'BALANCE_BY_DATE' && <div><dt>Mes objetivo</dt><dd>{monthLabel(target.targetMonth)}</dd></div>}
+        <div><dt>Progreso · {target.kind === 'MONTHLY_SET_ASIDE' ? 'Apartado este mes' : 'Saldo actual'}</dt><dd>{formatMoney(target.progressMinor)}</dd></div>
+        <div><dt>Falta</dt><dd>{formatMoney(target.remainingMinor)}</dd></div>
+        <div><dt>Estado</dt><dd>{target.status === 'MET' ? 'Cumplida' : target.status === 'OVERDUE' ? 'Vencida' : 'En progreso'}</dd></div>
+      </dl>
+      {showTargetDisclosure && <p className="target-disclosure">Se muestra la definición actual; no se conserva el historial del objetivo.</p>}
+    </section>}
+    <div className="target-actions">
+      <button type="button" className="secondary compact" onClick={openEditor}>{target ? 'Editar objetivo' : 'Definir objetivo'}</button>
+      {target && <button type="button" className="ghost danger compact" onClick={() => void removeTarget()} disabled={app.busy}>Quitar objetivo</button>}
+    </div>
+    {editing && <form className="inline-panel target-editor" onSubmit={event => { event.preventDefault(); void saveTarget(); }}>
+      <div className="field"><label htmlFor={`target-kind-${category.id}`}>Tipo de objetivo</label><select id={`target-kind-${category.id}`} value={kind} onChange={event => setKind(event.target.value as CategoryTargetInput['kind'])}>
+        <option value="MONTHLY_SET_ASIDE">Apartar cada mes</option><option value="BALANCE_BY_DATE">Alcanzar un saldo para un mes</option>
+      </select></div>
+      <MoneyInput id={`target-amount-${category.id}`} label="Monto objetivo" value={amount} onChange={setAmount} />
+      {kind === 'BALANCE_BY_DATE' && <div className="field"><label htmlFor={`target-month-${category.id}`}>Mes objetivo</label><input id={`target-month-${category.id}`} type="month" value={targetMonth} onChange={event => setTargetMonth(event.target.value)} required /></div>}
+      <div className="form-actions"><button type="submit" disabled={app.busy}>Guardar objetivo</button><button type="button" className="ghost" onClick={() => setEditing(false)}>Cancelar</button></div>
+    </form>}
+    {showSuggestion && target && <aside className="target-suggestion" aria-label={`Sugerencia para ${category.name}`}>
+      <div><p className="section-kicker">Sugerencia</p><p>Podrías asignar {formatMoney(target.remainingMinor)} a {category.name}. No forma parte de tu disponible para asignar y no se aplicará sin tu confirmación.</p></div>
+      {!confirming && <button type="button" className="secondary" onClick={() => setConfirming(true)} disabled={app.busy}>Revisar sugerencia</button>}
+      {confirming && <div className="target-confirmation" role="group" aria-label={`Confirmar asignación para ${category.name}`}>
+        <p>¿Quieres asignar {formatMoney(target.remainingMinor)} a {category.name} ahora?</p>
+        <button type="button" onClick={() => void confirmAssignment()} disabled={app.busy}>Confirmar asignación</button>
+        <button type="button" className="ghost" onClick={() => setConfirming(false)}>Cancelar</button>
+      </div>}
+    </aside>}
+  </div>;
+}
+
 function CategoryRow({ category }: { category: CategorySummary }) {
   const app = useBudget(); const [panel, setPanel] = useState<'add' | 'remove' | 'move' | 'rename' | null>(null); const [amount, setAmount] = useState(''); const [destination, setDestination] = useState(''); const [name, setName] = useState(category.name);
   const submitAmount = async (kind: 'add' | 'remove' | 'move') => { try { const minor = parseMoneyToMinor(amount); if (kind === 'add') await app.assign(category.id, minor); if (kind === 'remove') await app.unassign(category.id, minor); if (kind === 'move' && destination) await app.move(category.id, destination, minor); setAmount(''); setPanel(null); } catch (error) { app.setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Monto inválido.' }); } };
   const otherCategories = app.activeCategories.filter(item => item.id !== category.id);
-  return <article className="category-row" data-testid={`category-${category.id}`}><div className="category-main"><div><strong>{category.name}</strong><small>{category.activityMinor === 0 ? 'Sin movimientos este mes' : `Actividad ${formatMoney(category.activityMinor)}`}</small></div><div className="category-values"><span><small>Asignado</small>{formatMoney(category.assignedMinor)}</span><span className={category.availableMinor < 0 ? 'negative' : ''}><small>Disponible</small>{formatMoney(category.availableMinor)}</span></div><div className="category-actions"><button type="button" className="secondary compact" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Ajustar</button><button type="button" className="icon-button" aria-label={`Opciones de ${category.name}`} onClick={() => setPanel(panel === 'rename' ? null : 'rename')}>•••</button></div></div>{panel === 'add' && <div className="inline-panel"><div className="segmented"><button type="button" className="active" onClick={() => setPanel('add')}>Agregar</button><button type="button" onClick={() => setPanel('remove')}>Retirar</button><button type="button" onClick={() => setPanel('move')}>Mover</button></div><MoneyInput id={`amount-${category.id}`} label="Monto a agregar" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('add')} disabled={app.busy}>Guardar cambio</button></div>}{panel === 'remove' && <div className="inline-panel"><div className="segmented"><button type="button" onClick={() => setPanel('add')}>Agregar</button><button type="button" className="active">Retirar</button><button type="button" onClick={() => setPanel('move')}>Mover</button></div><MoneyInput id={`remove-${category.id}`} label="Monto a devolver a disponible" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('remove')} disabled={app.busy}>Reducir asignación</button></div>}{panel === 'move' && <div className="inline-panel"><div className="segmented"><button type="button" onClick={() => setPanel('add')}>Agregar</button><button type="button" onClick={() => setPanel('remove')}>Retirar</button><button type="button" className="active">Mover</button></div><label htmlFor={`destination-${category.id}`}>Mover hacia</label><select id={`destination-${category.id}`} value={destination} onChange={e => setDestination(e.target.value)}><option value="">Elige una categoría</option>{otherCategories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><MoneyInput id={`move-${category.id}`} label="Monto" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('move')} disabled={!destination || app.busy}>Mover dinero</button></div>}{panel === 'rename' && <div className="inline-panel category-manage"><label htmlFor={`rename-${category.id}`}>Nombre de la categoría</label><input id={`rename-${category.id}`} value={name} onChange={e => setName(e.target.value)} /><div className="form-actions"><button type="button" className="secondary" onClick={async () => { await app.renameCategory(category.id, name); setPanel(null); }}>Renombrar</button><button type="button" className="ghost danger" onClick={async () => { if (window.confirm(`¿Archivar ${category.name}? Su historial se conservará.`)) await app.archiveCategory(category.id); }}>Archivar</button></div></div>}</article>;
+  return <article className="category-row" data-testid={`category-${category.id}`}><div className="category-main"><div><strong>{category.name}</strong><small>{category.activityMinor === 0 ? 'Sin movimientos este mes' : `Actividad ${formatMoney(category.activityMinor)}`}</small></div><div className="category-values"><span><small>Asignado</small>{formatMoney(category.assignedMinor)}</span><span className={category.availableMinor < 0 ? 'negative' : ''}><small>Disponible</small>{formatMoney(category.availableMinor)}</span></div><div className="category-actions"><button type="button" className="secondary compact" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Ajustar</button><button type="button" className="icon-button" aria-label={`Opciones de ${category.name}`} onClick={() => setPanel(panel === 'rename' ? null : 'rename')}>•••</button></div></div><CategoryTargetPanel category={category} />{panel === 'add' && <div className="inline-panel"><div className="segmented"><button type="button" className="active" onClick={() => setPanel('add')}>Agregar</button><button type="button" onClick={() => setPanel('remove')}>Retirar</button><button type="button" onClick={() => setPanel('move')}>Mover</button></div><MoneyInput id={`amount-${category.id}`} label="Monto a agregar" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('add')} disabled={app.busy}>Guardar cambio</button></div>}{panel === 'remove' && <div className="inline-panel"><div className="segmented"><button type="button" onClick={() => setPanel('add')}>Agregar</button><button type="button" className="active">Retirar</button><button type="button" onClick={() => setPanel('move')}>Mover</button></div><MoneyInput id={`remove-${category.id}`} label="Monto a devolver a disponible" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('remove')} disabled={app.busy}>Reducir asignación</button></div>}{panel === 'move' && <div className="inline-panel"><div className="segmented"><button type="button" onClick={() => setPanel('add')}>Agregar</button><button type="button" onClick={() => setPanel('remove')}>Retirar</button><button type="button" className="active">Mover</button></div><label htmlFor={`destination-${category.id}`}>Mover hacia</label><select id={`destination-${category.id}`} value={destination} onChange={e => setDestination(e.target.value)}><option value="">Elige una categoría</option>{otherCategories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><MoneyInput id={`move-${category.id}`} label="Monto" value={amount} onChange={setAmount} /><button type="button" onClick={() => submitAmount('move')} disabled={!destination || app.busy}>Mover dinero</button></div>}{panel === 'rename' && <div className="inline-panel category-manage"><label htmlFor={`rename-${category.id}`}>Nombre de la categoría</label><input id={`rename-${category.id}`} value={name} onChange={e => setName(e.target.value)} /><div className="form-actions"><button type="button" className="secondary" onClick={async () => { await app.renameCategory(category.id, name); setPanel(null); }}>Renombrar</button><button type="button" className="ghost danger" onClick={async () => { if (window.confirm(`¿Archivar ${category.name}? Su historial se conservará.`)) await app.archiveCategory(category.id); }}>Archivar</button></div></div>}</article>;
 }
 
 export default function BudgetPage() {
