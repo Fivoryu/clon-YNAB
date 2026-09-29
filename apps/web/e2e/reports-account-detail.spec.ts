@@ -115,6 +115,151 @@ async function seedAccountActivity(page: Page): Promise<AccountSeed> {
   return { budgetId: budget.id, principalId: principal.id, savingsId: savings.id, spendingId, incomeId, transferId };
 }
 
+async function seedMultiMonthActivity(page: Page): Promise<void> {
+  const budget = await seedReadyBudget(page);
+  const principal = budget.accounts.find(account => account.name === 'Principal')!;
+  const comida = budget.categories.find(category => category.name === 'Comida')!;
+  const created = await postCommand(page, `/api/v1/budgets/${budget.id}/accounts`, { name: 'Ahorros', kind: 'checking', openingBalanceMinor: 0 }, budget.version);
+  expect(created.status()).toBe(201);
+  const savings = (await created.json()).data.account as AccountSnapshot;
+  let current = await reloadBudget(page, budget.id);
+  const spending = await postCommand(page, `/api/v1/budgets/${budget.id}/spending`, { amountMinor: expenseMinor, categoryId: comida.id, accountId: principal.id, date: '2026-08-10', payee: 'Mercado' }, current.version);
+  expect(spending.status()).toBe(201);
+  current = await reloadBudget(page, budget.id);
+  const income = await postCommand(page, `/api/v1/budgets/${budget.id}/income`, { amountMinor: incomeMinor, accountId: principal.id, date: '2026-10-17', payee: 'Cliente' }, current.version);
+  expect(income.status()).toBe(201);
+  expect((await income.json()).data.released).toBe(false);
+  current = await reloadBudget(page, budget.id);
+  const transfer = await postCommand(page, `/api/v1/budgets/${budget.id}/transfers`, { sourceAccountId: principal.id, destinationAccountId: savings.id, amountMinor: transferMinor, date: '2026-10-20', payee: 'Ahorro mensual' }, current.version);
+  expect(transfer.status()).toBe(201);
+}
+
+test.describe('multi-month report surface', () => {
+  test('presents a seeded inclusive range and removes results after invalid ranges or failure', async ({ page }) => {
+    test.setTimeout(180_000);
+    await seedMultiMonthActivity(page);
+    await page.setViewportSize({ width: 320, height: 820 });
+    await page.goto('/budget');
+
+    const mobileNav = page.getByRole('navigation', { name: 'Navegación móvil' });
+    const mobileLinks = await mobileNav.getByRole('link').all();
+    expect(mobileLinks).toHaveLength(6);
+    for (const link of mobileLinks) await expect(link).toBeInViewport();
+    const navRows = await mobileNav.locator('a').evaluateAll(links => new Set(links.map(link => Math.round(link.getBoundingClientRect().top))).size);
+    expect(navRows).toBe(1);
+    const trendsLink = mobileNav.getByRole('link', { name: 'Meses lado a lado' });
+    await expect(trendsLink).toBeVisible();
+    await expect(trendsLink).toHaveAttribute('href', '/reports/trends');
+    await trendsLink.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/reports\/trends$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Reporte de meses lado a lado' })).toBeVisible();
+
+    const start = page.getByLabel('Mes de inicio');
+    const end = page.getByLabel('Mes de fin');
+    await expect(start).toHaveAttribute('aria-describedby', 'report-range-hint');
+    await expect(end).toHaveAttribute('aria-describedby', 'report-range-hint');
+    await expect(page.locator('#report-range-hint')).toContainText('incluye el mes de inicio y el mes de fin');
+    await start.fill('2026-08');
+    await end.fill('2026-10');
+
+    const main = page.getByRole('main');
+    const summary = page.getByRole('table', { name: /Resumen mensual/ });
+    await expect(summary.locator('tbody tr')).toHaveCount(3);
+    await expect(summary.getByRole('rowheader').nth(0)).toHaveText('agosto de 2026');
+    await expect(summary.getByRole('rowheader').nth(1)).toHaveText('septiembre de 2026');
+    await expect(summary.getByRole('rowheader').nth(2)).toHaveText('octubre de 2026');
+    const rows = summary.locator('tbody tr');
+    expect(await readMinor(rows.nth(0).locator('td').nth(0))).toBe(0);
+    expect(await readMinor(rows.nth(0).locator('td').nth(1))).toBe(expenseMinor);
+    expect(await readMinor(rows.nth(1).locator('td').nth(0))).toBe(0);
+    expect(await readMinor(rows.nth(1).locator('td').nth(1))).toBe(0);
+    expect(await readMinor(rows.nth(2).locator('td').nth(0))).toBe(incomeMinor);
+    expect(await readMinor(rows.nth(2).locator('td').nth(3))).toBe(transferMinor);
+    await expect(page.locator('.report-month-detail summary').nth(1)).toContainText('Sin actividad registrada');
+    const chart = page.getByRole('img', { name: /ingresos y gastos por mes/i });
+    await expect(chart).toBeVisible();
+    const chartValues = chart.locator('.report-chart-value');
+    await expect(chartValues).toHaveCount(6);
+    expect(await readMinor(chartValues.nth(0))).toBe(0);
+    expect(await readMinor(chartValues.nth(1))).toBe(expenseMinor);
+    expect(await readMinor(chartValues.nth(2))).toBe(0);
+    expect(await readMinor(chartValues.nth(3))).toBe(0);
+    expect(await readMinor(chartValues.nth(4))).toBe(incomeMinor);
+    expect(await readMinor(chartValues.nth(5))).toBe(0);
+
+    await expect(main.getByText(/edición o eliminación ordinaria puede cambiar/i)).toBeVisible();
+    await expect(main.getByText(/etiquetas de categoría son las actuales/i)).toBeVisible();
+    await expect(main.getByText(/no es un registro duradero/i)).toBeVisible();
+    await expect(main.getByText(/meses se presentan lado a lado.*no analiza una tendencia/i)).toBeVisible();
+    await expect(main.getByText('report-policy/v2', { exact: true })).toBeVisible();
+    await expect(main.getByText('report-policy/v1', { exact: true })).toBeVisible();
+    await expect(page.locator('.report-range-meta')).toContainText('2026-08');
+    await expect(page.locator('.report-range-meta')).toContainText('2026-10');
+    await expect(page.locator('.report-range-meta')).toContainText(/Revisión[\s\S]*\d+/);
+
+    const period = page.getByRole('region', { name: /Total del periodo/ });
+    await expect(period).toContainText(/solo medidas de flujo/i);
+    expect(await readMinor(measure(page, 'Ingresos del periodo'))).toBe(incomeMinor);
+    expect(await readMinor(measure(page, 'Gastos del periodo'))).toBe(expenseMinor);
+    expect(await readMinor(period.locator('.report-total-line strong'))).toBe(transferMinor);
+    await expect(period.getByText(/pendiente de liberar/i)).toHaveCount(0);
+    await expect(period.getByRole('table')).toHaveCount(1);
+    const categoryTotal = period.getByRole('table').getByRole('rowheader', { name: 'Comida' }).locator('..').locator('td');
+    expect(await readMinor(categoryTotal)).toBe(expenseMinor);
+    await expect(measure(page, 'Movimientos provisionales del periodo')).toHaveText('0');
+    const monthListFollows = await page.locator('.report-month-list').evaluate(months => Boolean(
+      months.compareDocumentPosition(document.querySelector('.report-period-total')!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ));
+    expect(monthListFollows).toBe(true);
+
+    const details = page.locator('.report-month-detail');
+    await expect(details).toHaveCount(3);
+    const october = details.nth(2);
+    const octoberSummary = october.locator('summary');
+    await octoberSummary.focus();
+    await page.keyboard.press('Enter');
+    await expect(october).toHaveAttribute('open', '');
+    for (const heading of [/Ingresos y gastos del mes/, /Gasto por categoría/, /Transferencias del mes/, /Movimientos provisionales/, /Ingresos pendientes de liberar/]) {
+      await expect(october.getByRole('heading', { name: heading })).toBeVisible();
+    }
+    await expect(october).toContainText('fuera de los totales de ingresos y gastos');
+    await expect(october).toContainText('Pendiente de liberar');
+
+    const forbiddenControls = await main.locator('button, a, input, select, summary, [role="button"], [role="link"], [role="tab"]').evaluateAll(elements => elements.flatMap(element => {
+      const name = `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`;
+      return /compar|percent|porcentaje|delta|trend|tendencia|export|descargar/i.test(name) ? [name] : [];
+    }));
+    expect(forbiddenControls).toEqual([]);
+
+    await start.fill('2024-10');
+    await end.fill('2026-09');
+    await expect(summary.locator('tbody tr')).toHaveCount(24);
+    await expect(details).toHaveCount(24);
+
+    await start.fill('2026-10');
+    await expect(main.getByRole('alert')).toContainText(/inicio no puede ser posterior/i);
+    await expect(page.locator('.report-summary-table, .report-chart, .report-month-detail, .report-period-total')).toHaveCount(0);
+
+    await start.fill('2026-01');
+    await end.fill('2026-08');
+    await expect(summary.locator('tbody tr')).toHaveCount(8);
+    await end.fill('2028-01');
+    await expect(main.getByRole('alert')).toContainText(/superar 24 meses/i);
+    await expect(page.locator('.report-summary-table, .report-chart, .report-month-detail, .report-period-total')).toHaveCount(0);
+
+    await start.fill('2026-08');
+    await end.fill('2026-10');
+    await expect(summary.locator('tbody tr')).toHaveCount(3);
+    await page.route(/\/api\/v1\/budgets\/[^/]+\/reports\/monthly\?from=/, route => route.fulfill({
+      status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Test range failure.' } }),
+    }));
+    await start.fill('2026-07');
+    await expect(main.getByRole('alert')).toContainText('Test range failure.');
+    await expect(page.locator('.report-summary-table, .report-chart, .report-month-detail, .report-period-total')).toHaveCount(0);
+  });
+});
+
 test.describe('single-month report surface', () => {
   test('renders the policy-approved treatments and proves comparison, trend, and export controls are absent at runtime', async ({ page }) => {
     await seedReportActivity(page);
@@ -222,8 +367,10 @@ test.describe('account detail and activity surface', () => {
     const seed = await seedAccountActivity(page);
 
     await page.goto('/accounts');
+    await page.waitForLoadState('networkidle');
     const accountLink = page.getByRole('link', { name: 'Ver actividad de Principal' });
     await expect(accountLink).toBeVisible();
+    await expect(accountLink).toHaveAttribute('href', `/accounts/${seed.principalId}`);
     await accountLink.click();
     await expect(page).toHaveURL(new RegExp(`/accounts/${seed.principalId}$`));
 

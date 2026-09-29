@@ -11,6 +11,7 @@ import {
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const reportPage = (() => { try { return read('../app/reports/page.tsx'); } catch { return ''; } })();
+const trendsPage = (() => { try { return read('../app/reports/trends/page.tsx'); } catch { return ''; } })();
 const shell = read('../app/components/shell/AppShell.tsx');
 const controller = read('../app/hooks/useBudgetApp.ts');
 const models = read('../app/models.ts');
@@ -49,9 +50,27 @@ test('the unresolved-policy projection is distinguishable from a monthly report'
 test('the report surface is discoverable from the primary navigation', () => {
   assert.match(shell, /href: '\/reports'/);
   assert.match(shell, /label: 'Reportes'/);
+  assert.match(shell, /href: '\/reports\/trends', label: 'Meses lado a lado'/);
   assert.match(shell, /<nav aria-label="Navegación principal">/);
   assert.match(shell, /className="mobile-nav" aria-label="Navegación móvil"/);
   assert.match(shell, /nav\.map\(item => <Link[^>]*><span>\{item\.icon\}<\/span><small>\{item\.label\}<\/small><\/Link>\)/);
+});
+
+test('the multi-month route presents months without derived totals or trend controls', () => {
+  assert.match(trendsPage, /RouteGate gate="ready"/);
+  assert.equal((trendsPage.match(/type="month"/g) ?? []).length, 2);
+  assert.match(trendsPage, /aria-describedby="report-range-hint"/);
+  assert.match(trendsPage, /app\.readReportRange\(from, to\)/);
+  assert.match(trendsPage, /Se recalcula desde el historial efectivo/);
+  assert.match(trendsPage, /etiquetas de categoría son las actuales/);
+  assert.match(trendsPage, /serie no es un registro duradero/);
+  assert.match(trendsPage, /report-policy\/v2/);
+  assert.match(trendsPage, /report-policy\/v1/);
+  assert.match(trendsPage, /<details/);
+  assert.match(trendsPage, /role="img"/);
+  assert.match(trendsPage, /scope="row"/);
+  assert.match(trendsPage, /solo medidas de flujo/);
+  assert.doesNotMatch(trendsPage, /total\.pendingMinor|total\.incomeRelease|periodPending|comparison|percentageChange|movingAverage|trendline|Exportar/i);
 });
 
 test('the report page works on exactly one selected YYYY-MM period', () => {
@@ -162,7 +181,7 @@ test('the report surface reflows to a single column and scrolls its tables on na
   assert.match(styles, /\.report-table-scroll \{/);
   assert.match(styles, /\.report-table-scroll \{[\s\S]*?overflow-x: auto/);
   assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.report-measure-list \{ grid-template-columns: 1fr; \}/);
-  assert.match(styles, /@media \(max-width: 980px\) \{[\s\S]*?\.mobile-nav \{[\s\S]*?repeat\(5, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 980px\) \{[\s\S]*?\.mobile-nav \{[\s\S]*?repeat\(auto-fit, minmax\(/);
 });
 
 test('every approved section renders together for a monthly report, so nothing is silently omitted', () => {
