@@ -187,3 +187,68 @@ export function reportMonthLabel(month: string): string {
 export function isMonthlyReportUnavailable(projection: MonthlyReportProjection): projection is MonthlyReportUnavailable {
   return 'unavailable' in projection;
 }
+
+export type MultiMonthReportPolicy = {
+  id: 'report-policy/v2';
+  monthBasis: 'report-policy/v1';
+  from: string;
+  to: string;
+  monthCount: number;
+};
+export type MultiMonthReportTotal = {
+  treatment: 'PERIOD_TOTAL_FLOW_MEASURES_ONLY';
+  incomeMinor: number;
+  expenseMinor: number;
+  categories: MonthlyReportCategorySpending[];
+  transfers: { treatment: 'OUTSIDE_INCOME_EXPENSE_TOTALS'; totalMinor: number };
+  provisional: { treatment: 'INCLUDED_PROVISIONAL'; count: number; incomeMinor: number; expenseMinor: number };
+};
+export type MultiMonthDisclosure = {
+  recomputedFromEffectiveHistory: true;
+  categoryLabelsAreCurrent: true;
+  durable: false;
+};
+export type MultiMonthReport = {
+  policy: MultiMonthReportPolicy;
+  months: MonthlyReport[];
+  total: MultiMonthReportTotal;
+  disclosure: MultiMonthDisclosure;
+  version: number;
+};
+export type MultiMonthReportErrorKind = 'initial' | 'invalid-range';
+export type MultiMonthReportState = {
+  from: string;
+  to: string;
+  report: MultiMonthReport | null;
+  loading: boolean;
+  error: string | null;
+  errorKind: MultiMonthReportErrorKind | null;
+};
+
+/** The API's inclusive maximum for one range. The client rejects beyond it and never clamps. */
+export const REPORT_RANGE_MAX_MONTHS = 24;
+
+/** Inclusive month count of `from`..`to`, or null when a month is malformed or the range is inverted. Pure measurement; the maximum is enforced by `isReportRange`. */
+export function reportRangeLength(from: string, to: string): number | null {
+  if (!isReportMonth(from) || !isReportMonth(to)) return null;
+  const [fromYear, fromIndex] = from.split('-').map(Number);
+  const [toYear, toIndex] = to.split('-').map(Number);
+  const length = (toYear - fromYear) * 12 + (toIndex - fromIndex) + 1;
+  return length < 1 ? null : length;
+}
+
+/** The user-facing reason a range cannot be requested, or null when it can. */
+export function reportRangeError(from: string, to: string): string | null {
+  if (!isReportMonth(from) || !isReportMonth(to)) return 'Elige un mes válido en formato AAAA-MM para el inicio y el fin.';
+  const length = reportRangeLength(from, to);
+  if (length === null) return 'El mes de inicio no puede ser posterior al mes de fin.';
+  if (length > REPORT_RANGE_MAX_MONTHS) return `El rango no puede superar ${REPORT_RANGE_MAX_MONTHS} meses.`;
+  return null;
+}
+
+export function isReportRange(from: string, to: string): boolean { return reportRangeError(from, to) === null; }
+
+export function reportRangeLabel(from: string, to: string): string {
+  if (!isReportMonth(from) || !isReportMonth(to)) return [from || 'sin inicio', to || 'sin fin'].join(' \u2013 ');
+  return from === to ? reportMonthLabel(from) : `${reportMonthLabel(from)} \u2013 ${reportMonthLabel(to)}`;
+}

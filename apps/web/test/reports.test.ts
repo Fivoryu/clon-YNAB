@@ -141,9 +141,13 @@ test('the report surface is keyboard reachable and announced to assistive techno
   assert.match(reportPage, /aria-labelledby="report-transfers-title"/);
 });
 
-test('the web client consumes only the approved single-month report endpoint', () => {
-  assert.equal((controller.match(/reports\/monthly/g) ?? []).length, 1);
+test('the web client consumes only the approved report route, in its single-month and range modes', () => {
+  assert.equal((controller.match(/reports\/monthly/g) ?? []).length, 2, 'the approved route is reached in exactly two modes');
+  assert.equal((controller.match(/reports\/monthly\?month=/g) ?? []).length, 1, 'exactly one single-month request');
+  assert.equal((controller.match(/reports\/monthly\?from=/g) ?? []).length, 1, 'exactly one range request');
+  assert.doesNotMatch(controller, /reports\/(?!monthly)/, 'no other report endpoint is called');
   assert.match(controller, /readMonthlyReport/);
+  assert.match(controller, /readReportRange/);
   assert.match(controller, /report, setReport/);
   assert.match(models, /export function isReportMonth/);
   assert.match(models, /export function reportMonthLabel/);

@@ -14,9 +14,11 @@ import type {
   HistoryResponse,
   MonthlyReportProjection,
   MonthlyReportState,
+  MultiMonthReport,
+  MultiMonthReportState,
   Summary,
 } from '../models';
-import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, isReportMonth, markAccountHistoryAppendError } from '../models';
+import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, isReportMonth, isReportRange, markAccountHistoryAppendError, reportRangeError } from '../models';
 
 type SessionStatus = 'checking' | 'guest' | 'setup' | 'ready';
 export type Notice = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -48,6 +50,8 @@ export function useBudgetApp() {
   const accountHistoryRequestId = useRef(0);
   const [report, setReport] = useState<MonthlyReportState | null>(null);
   const reportRequestId = useRef(0);
+  const [reportRange, setReportRange] = useState<MultiMonthReportState | null>(null);
+  const reportRangeRequestId = useRef(0);
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({});
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +160,7 @@ export function useBudgetApp() {
     if (!budgetId || budget?.setupStep !== 'COMPLETE') return null;
     const requestedMonth = month.trim();
     const requestId = ++reportRequestId.current;
+    reportRangeRequestId.current += 1;
     if (!isReportMonth(requestedMonth)) {
       const invalid: MonthlyReportState = { month: requestedMonth, projection: null, loading: false, error: 'Elige un mes válido en formato AAAA-MM.', errorKind: 'invalid-month' };
       setReport(invalid);
@@ -174,6 +179,35 @@ export function useBudgetApp() {
       const message = error instanceof Error ? error.message : 'No se pudo cargar el reporte del mes.';
       const failed: MonthlyReportState = { month: requestedMonth, projection: null, loading: false, error: message, errorKind: 'initial' };
       setReport(failed);
+      return failed;
+    }
+  }, [budget?.id, budget?.setupStep]);
+
+  const readReportRange = useCallback(async (from: string, to: string) => {
+    const budgetId = budget?.id;
+    if (!budgetId || budget?.setupStep !== 'COMPLETE') return null;
+    const requestedFrom = from.trim();
+    const requestedTo = to.trim();
+    const requestId = ++reportRangeRequestId.current;
+    reportRequestId.current += 1;
+    if (!isReportRange(requestedFrom, requestedTo)) {
+      const invalid: MultiMonthReportState = { from: requestedFrom, to: requestedTo, report: null, loading: false, error: reportRangeError(requestedFrom, requestedTo) ?? 'Elige un rango válido.', errorKind: 'invalid-range' };
+      setReportRange(invalid);
+      return invalid;
+    }
+    const loading: MultiMonthReportState = { from: requestedFrom, to: requestedTo, report: null, loading: true, error: null, errorKind: null };
+    setReportRange(loading);
+    try {
+      const report = await apiCall<MultiMonthReport>(`/api/v1/budgets/${budgetId}/reports/monthly?from=${encodeURIComponent(requestedFrom)}&to=${encodeURIComponent(requestedTo)}`);
+      if (requestId !== reportRangeRequestId.current) return null;
+      const loaded: MultiMonthReportState = { from: requestedFrom, to: requestedTo, report, loading: false, error: null, errorKind: null };
+      setReportRange(loaded);
+      return loaded;
+    } catch (error) {
+      if (requestId !== reportRangeRequestId.current) return null;
+      const message = error instanceof Error ? error.message : 'No se pudo cargar el reporte del rango.';
+      const failed: MultiMonthReportState = { from: requestedFrom, to: requestedTo, report: null, loading: false, error: message, errorKind: 'initial' };
+      setReportRange(failed);
       return failed;
     }
   }, [budget?.id, budget?.setupStep]);
@@ -247,8 +281,8 @@ export function useBudgetApp() {
     setBusy(true);
     try {
       await apiCall('/api/v1/auth/sign-out', { method: 'POST' });
-      accountHistoryRequestId.current += 1; reportRequestId.current += 1;
-      setBudget(null); setSummary(null); setHistory(null); setAccountHistory(null); setReport(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
+      accountHistoryRequestId.current += 1; reportRequestId.current += 1; reportRangeRequestId.current += 1;
+      setBudget(null); setSummary(null); setHistory(null); setAccountHistory(null); setReport(null); setReportRange(null); setPendingIncomes([]); setHistoryFilters({}); setStatus('guest');
       setNotice({ kind: 'info', text: 'Sesión cerrada.' });
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo cerrar la sesión.' });
@@ -382,7 +416,7 @@ export function useBudgetApp() {
     assign, unassign, move, recordIncome, recordSpending, recordTransfer, releaseIncome,
     createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory,
     applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
-    readMonthlyReport,
+    readMonthlyReport, readReportRange, reportRange,
     editTransaction, deleteTransaction, exportCsv, importCsv,
   };
 }
