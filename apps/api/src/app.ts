@@ -5,7 +5,7 @@ import { ReportService, type FinancialSummary } from './reports/report-service.t
 import { projectMonthlyReport, type MonthlyReportProjection } from './reports/monthly-report.ts';
 import { monthRangeLength, projectMultiMonthReport, type MultiMonthReport } from './reports/multi-month-report.ts';
 import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
-import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
+import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TargetInput, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
 import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
 import { InMemorySimulationStore } from './persistence/in-memory-simulation-store.ts';
@@ -49,6 +49,19 @@ const publicAccount = (account: AccountState): PublicAccount => ({ id: account.i
     const publicBudget = (b: BudgetState): Budget => { const accounts = b.accounts?.length ? b.accounts : b.account ? [{ ...b.account, kind: b.account.kind ?? 'CASH', archived: b.account.archived ?? false }] : []; const projected = accounts.map(publicAccount); const alias = projected.find(account => account.id === b.account?.id) ?? oldestAccount(projected) ?? null; return { id: b.id, setupStep: b.setupStep, timezone: b.timezone, version: b.version, accounts: projected, accountBalanceMinor: projected.reduce((sum, account) => sum + account.balanceMinor, 0), account: alias, categories: b.categories.map(c => ({ id: c.id, name: c.name, archived: c.archived })) }; };
 const amount = (value: unknown, name = 'amountMinor') => { if (!Number.isSafeInteger(value as number) || (value as number) <= 0) throw new ApiError('VALIDATION_ERROR', `${name} must be a positive integer minor-unit amount`); return value as number; };
 const month = (value: unknown) => { if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', 'month must be YYYY-MM'); return value; };
+const categoryTargetInput = (input: unknown): TargetInput => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ApiError('VALIDATION_ERROR', 'Target definition is invalid');
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).some(key => !['kind', 'amountMinor', 'targetMonth'].includes(key))) throw new ApiError('VALIDATION_ERROR', 'Target definition contains an unsupported field');
+  if (value.kind !== 'MONTHLY_SET_ASIDE' && value.kind !== 'BALANCE_BY_DATE') throw new ApiError('VALIDATION_ERROR', 'Target kind is unsupported');
+  const amountMinor = amount(value.amountMinor);
+  if (value.kind === 'BALANCE_BY_DATE') {
+    if (!Object.hasOwn(value, 'targetMonth')) throw new ApiError('VALIDATION_ERROR', 'targetMonth is required for BALANCE_BY_DATE');
+    return { kind: value.kind, amountMinor, targetMonth: month(value.targetMonth) };
+  }
+  if (Object.hasOwn(value, 'targetMonth')) throw new ApiError('VALIDATION_ERROR', 'targetMonth is not allowed for MONTHLY_SET_ASIDE');
+  return { kind: value.kind, amountMinor };
+};
 const dateMonth = (value: unknown, timezone: string) => { try { return monthForDate(typeof value === 'string' ? value : new Date(), timezone); } catch { throw new ApiError('VALIDATION_ERROR', 'date is invalid'); } };
 const metadata = (input: unknown) => { try { return normalizeMetadata(input as { payee?: unknown; memo?: unknown }); } catch (error) { throw new ApiError('VALIDATION_ERROR', error instanceof Error ? error.message : 'metadata is invalid'); } };
 const metadataPatch = (input: unknown) => { try { return normalizeMetadataPatch(input); } catch (error) { throw new ApiError('VALIDATION_ERROR', error instanceof Error ? error.message : 'metadata is invalid'); } };
@@ -117,7 +130,7 @@ export class BudgetApp {
       const found = this.budgetStore.findUserById(user.id);
       const persist = (owner: StoredUser | null) => {
         if (!owner) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
-        const state: BudgetState = { id: randomUUID(), setupStep: 'ACCOUNT', timezone: 'UTC', version: 0, account: null, categories: [], events: [] };
+        const state: BudgetState = { id: randomUUID(), setupStep: 'ACCOUNT', timezone: 'UTC', version: 0, account: null, categories: [], targets: [], events: [] };
         try { return this.result(this.budgetStore.createBudget(owner.id, state), requestId, saved => { this.registerSimulationBudget(owner.id, saved.id); return ok(publicBudget(saved), requestId); }); } catch (error) { return this.storeError(error); }
       };
       return found instanceof Promise ? found.then(persist) : persist(found);
@@ -207,6 +220,27 @@ export class BudgetApp {
   createCategory(token: string, budgetId: string, name: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const trimmed = name.trim(); if (!trimmed) throw new ApiError('VALIDATION_ERROR', 'Category name is required'); if (budget.categories.some(c => !c.archived && c.name.toLowerCase() === trimmed.toLowerCase())) throw new ApiError('CONFLICT', 'Category already exists'); budget.categories.push({ id: randomUUID(), name: trimmed, archived: false }); }); }
   renameCategory(token: string, budgetId: string, categoryId: string, name: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); if (!name.trim()) throw new ApiError('VALIDATION_ERROR', 'Category name is required'); category.name = name.trim(); }); }
   archiveCategory(token: string, budgetId: string, categoryId: string, requestId?: string) { return this.changeCategory(token, budgetId, requestId, budget => { const category = budget.categories.find(c => c.id === categoryId); if (!category) throw new ApiError('NOT_FOUND', 'Resource not found'); category.archived = true; budget.setupStep = budget.account && budget.categories.some(c => !c.archived) ? 'COMPLETE' : 'CATEGORIES'; }); }
+  async setCategoryTarget(token: string, budgetId: string, categoryId: string, input: unknown, requestId?: string, options: CommandOptions = {}) {
+    const target = categoryTargetInput(input);
+    return this.financial(token, budgetId, 'category-target-set', { categoryId, target }, requestId, options, (budget, _events, version) => {
+      const category = budget.categories.find(candidate => candidate.id === categoryId);
+      if (!category) throw new ApiError('NOT_FOUND', 'Resource not found');
+      if (category.archived) throw new ApiError('CONFLICT', 'Archived categories cannot have target changes');
+      budget.targets = [...(budget.targets ?? []).filter(candidate => candidate.categoryId !== categoryId), { categoryId, ...target }];
+      return { categoryId, target, version };
+    }, undefined, true, false, undefined, { categoryId, target });
+  }
+  async removeCategoryTarget(token: string, budgetId: string, categoryId: string, requestId?: string, options: CommandOptions = {}) {
+    return this.financial(token, budgetId, 'category-target-remove', { categoryId }, requestId, options, (budget, _events, version) => {
+      const category = budget.categories.find(candidate => candidate.id === categoryId);
+      if (!category) throw new ApiError('NOT_FOUND', 'Resource not found');
+      if (category.archived) throw new ApiError('CONFLICT', 'Archived categories cannot have target changes');
+      const targets = budget.targets ?? [];
+      if (!targets.some(candidate => candidate.categoryId === categoryId)) throw new ApiError('NOT_FOUND', 'Resource not found');
+      budget.targets = targets.filter(candidate => candidate.categoryId !== categoryId);
+      return { categoryId, target: null, version };
+    }, undefined, true, false, undefined, { categoryId, target: null });
+  }
   private changeCategory(token: string, budgetId: string, requestId: string | undefined, change: (budget: BudgetState) => void) {
     const current = this.requireBudget(token, budgetId); const save = (budget: BudgetState) => { change(budget); try { return this.result(this.budgetStore.saveBudget((budget as any).ownerId, budget), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); } }; return current instanceof Promise ? current.then(save) : save(current);
   }
@@ -462,10 +496,10 @@ export class BudgetApp {
   private simulationKey(value: unknown) { if (typeof value !== 'string' || !value.trim()) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); return value.trim(); }
   private simulationRevision(value: unknown) { if (!Number.isSafeInteger(value)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required'); return value as number; }
 
-  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false, persistAccounts = false, payloadDigest?: string) {
+  private async financial<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, audit?: (userId: string) => { actorId: string; transactionId: string; requestId?: string; reason?: string }, requireVersion = false, persistAccounts = false, payloadDigest?: string, persistTarget?: { categoryId: string; target: TargetInput | null }) {
     const user = await this.authenticate(token); await this.requireBudget(token, budgetId); const key = options.idempotencyKey?.trim(); if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required'); if (requireVersion && !Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
     try {
-      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(audit ? { deletionAudit: audit(user.id) } : {}), ...(persistAccounts ? { persistAccounts: true } : {}), ...(payloadDigest ? { payloadDigest } : {}) });
+      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(audit ? { deletionAudit: audit(user.id) } : {}), ...(persistAccounts ? { persistAccounts: true } : {}), ...(persistTarget ? { persistTarget } : {}), ...(payloadDigest ? { payloadDigest } : {}) });
       return ok(stored.result, requestId);
     } catch (error) {
       if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);

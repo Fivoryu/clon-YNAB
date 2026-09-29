@@ -26,7 +26,7 @@ test('persistence maps nullable metadata for legacy and current rows', () => {
   assert.equal(transfer.memo, null);
 });
 
-test('financial history version and source rows are read from one repeatable-read snapshot', async () => {
+test('financial state rows including targets share one repeatable-read snapshot', async () => {
   const snapshotEvent = { id: 'snapshot-event', transactionId: 'snapshot-event', kind: 'INCOME', amountMinor: 7, accountId: 'account-1', businessDate: new Date('2026-02-01T00:00:00Z'), month: '2026-02', createdAt: new Date('2026-02-01T01:00:00Z'), reconciled: false };
   const calls: string[] = [];
   const tx = {
@@ -34,13 +34,14 @@ test('financial history version and source rows are read from one repeatable-rea
     commandReceipt: { count: async () => { calls.push('version'); return 7; } },
     financialEvent: { findMany: async () => { calls.push('events'); return [snapshotEvent]; } },
     transfer: { findMany: async () => { calls.push('transfers'); return []; } },
+    categoryTarget: { findMany: async () => { calls.push('targets'); return []; } },
   };
   const client = { $transaction: async (work: (tx: any) => Promise<unknown>, options: any) => {
     assert.equal(options.isolationLevel, 'RepeatableRead');
     return work(tx);
   } };
   const state = await new FinancialStore(client as any).load('owner-1', 'budget-1');
-  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers']);
+  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers', 'targets']);
   assert.equal(state.version, 7);
   assert.equal(state.events[0].transactionId, 'snapshot-event');
 });

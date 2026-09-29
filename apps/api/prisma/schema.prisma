@@ -36,6 +36,11 @@ enum TransactionStatus {
   WORKING
 }
 
+enum CategoryTargetKind {
+  MONTHLY_SET_ASIDE
+  BALANCE_BY_DATE
+}
+
 enum SimulationRunState {
   DISCONNECTED
   CONNECTING
@@ -117,6 +122,7 @@ model Budget {
   owner      User               @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   accounts   Account[]
   categories Category[]
+  categoryTargets CategoryTarget[]
   months     BudgetMonth[]
   events     FinancialEvent[]
   transfers  Transfer[]
@@ -162,8 +168,21 @@ model Category {
   events            FinancialEvent[] @relation("CategoryEvents")
   sourceEvents      FinancialEvent[] @relation("SourceCategoryEvents")
   destinationEvents FinancialEvent[] @relation("DestinationCategoryEvents")
+  targets           CategoryTarget[]
       @@unique([budgetId, id])
   @@index([budgetId, archived])
+}
+
+model CategoryTarget {
+  categoryId  String            @id @db.Uuid
+  budgetId    String            @db.Uuid
+  kind        CategoryTargetKind
+  amountMinor BigInt
+  targetMonth String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  budget      Budget            @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  category    Category          @relation(fields: [budgetId, categoryId], references: [budgetId, id], onDelete: Restrict)
 }
 
 model OpeningBalance {

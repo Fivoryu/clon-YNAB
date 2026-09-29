@@ -4,11 +4,12 @@ info:
   version: 1.0.0
   description: >-
     The bounded slice supports cash and checking accounts, account lifecycle,
-    same-budget transfers, categories, realized income, explicit income release,
-    categorized spending, assignments, unassignments, moves, monthly summaries,
-    dashboard values, transaction history, and manual CSV import/export. Splits, cards, reconciliation, targets,
-    scheduled transactions, future income, refunds, reimbursements, returns, and
-    cleared/pending/uncleared states remain unsupported and are not part of this contract.
+    same-budget transfers, categories, category targets, realized income,
+    explicit income release, categorized spending, assignments, unassignments,
+    moves, monthly summaries, dashboard values, transaction history, and manual
+    CSV import/export. Splits, cards, reconciliation, scheduled transactions,
+    future income, refunds, reimbursements, returns, and cleared/pending/uncleared
+    states remain unsupported and are not part of this contract.
     Bank-provider simulation is a fictional local simulation only: no network, credentials are not accepted, provider connectivity, no real money, and no financial effects are accepted; candidate application is deferred.
 servers:
   - url: /
@@ -140,6 +141,29 @@ paths:
         '200': { $ref: '#/components/responses/BudgetSuccess' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/categories/{categoryId}/target:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/CategoryId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    put:
+      summary: Set or replace a category target
+      description: Target definitions are planning instructions only and never change financial values. Archived categories reject target changes.
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CategoryTargetInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/CategoryTargetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Remove a category target
+      description: Archived categories reject target changes; a category without a target returns not found.
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/CategoryTargetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/income:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatch' }]
     post:
@@ -535,7 +559,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: Required for financial commands; the same key and payload replay the stored result.
+      description: Required for financial and category-target mutations; the same key and payload replay the stored result.
       schema: { type: string, minLength: 1 }
     SimulationIdempotencyKey:
       name: Idempotency-Key
@@ -559,7 +583,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Required expected budget version for account and transfer commands. Weak or quoted integer ETags are accepted.
+      description: Required expected budget version for account, transfer, and category-target commands. Weak or quoted integer ETags are accepted.
       schema: { type: string, pattern: '^(?:[0-9]+|"[0-9]+"|W/"[0-9]+")$' }
   responses:
     UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
@@ -567,6 +591,7 @@ components:
     EmptySuccess: { description: Session revoked and cookie cleared, headers: { Set-Cookie: { description: Cleared session cookie, schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/EmptyEnvelope' } } } }
     BudgetSuccess: { description: Budget state, content: { application/json: { schema: { $ref: '#/components/schemas/BudgetEnvelope' } } } }
     AccountSuccess: { description: Account mutation result, content: { application/json: { schema: { $ref: '#/components/schemas/AccountEnvelope' } } } }
+    CategoryTargetSuccess: { description: Category target mutation result; target is null after removal., content: { application/json: { schema: { $ref: '#/components/schemas/CategoryTargetEnvelope' } } } }
     TransferSuccess: { description: Transfer result, content: { application/json: { schema: { $ref: '#/components/schemas/TransferEnvelope' } } } }
     FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
     TransactionListSuccess: { description: Effective transaction history, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionListEnvelope' } } } }
@@ -625,6 +650,24 @@ components:
     Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer } } }
     AccountInput: { type: object, required: [name, kind], additionalProperties: false, properties: { name: { type: string, minLength: 1 }, kind: { type: string, enum: [cash, checking] }, openingBalanceMinor: { type: integer } } }
     Category: { type: object, required: [id, name, archived], properties: { id: { type: string }, name: { type: string }, archived: { type: boolean } } }
+    CategoryTargetInput:
+      oneOf:
+        - type: object
+          required: [kind, amountMinor]
+          additionalProperties: false
+          properties:
+            kind: { type: string, enum: [MONTHLY_SET_ASIDE] }
+            amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991, description: Positive safe integer minor-unit amount. }
+        - type: object
+          required: [kind, amountMinor, targetMonth]
+          additionalProperties: false
+          properties:
+            kind: { type: string, enum: [BALANCE_BY_DATE] }
+            amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991, description: Positive safe integer minor-unit amount. }
+            targetMonth: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+      description: MONTHLY_SET_ASIDE forbids targetMonth; BALANCE_BY_DATE requires a YYYY-MM targetMonth.
+    CategoryTarget: { type: object, required: [kind, amountMinor], properties: { kind: { type: string, enum: [MONTHLY_SET_ASIDE, BALANCE_BY_DATE] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, targetMonth: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$', description: Present only for BALANCE_BY_DATE. } } }
+    CategoryTargetResult: { type: object, required: [categoryId, target, version], properties: { categoryId: { type: string, format: uuid }, target: { nullable: true, allOf: [{ $ref: '#/components/schemas/CategoryTarget' }] }, version: { type: integer, minimum: 0 } } }
     Budget: { type: object, required: [id, setupStep, timezone, version, accounts, accountBalanceMinor, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, accounts: { type: array, items: { $ref: '#/components/schemas/Account' } }, accountBalanceMinor: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
     Rta: { type: object, required: [amountMinor, openingBalanceMinor, releasedIncomeMinor, unreleasedIncomeMinor, priorCarryMinor, assignedMinor], properties: { amountMinor: { type: integer }, openingBalanceMinor: { type: integer }, releasedIncomeMinor: { type: integer }, unreleasedIncomeMinor: { type: integer }, priorCarryMinor: { type: integer }, assignedMinor: { type: integer } } }
     CategorySummary: { allOf: [{ $ref: '#/components/schemas/Category' }], type: object, properties: { carryoverMinor: { type: integer }, assignedMinor: { type: integer }, activityMinor: { type: integer }, availableMinor: { type: integer } } }
@@ -662,6 +705,7 @@ components:
     EmptyEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { nullable: true } } }
     BudgetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Budget' } } }
     AccountEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/AccountResult' } } }
+    CategoryTargetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/CategoryTargetResult' } } }
     TransferEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransferResult' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }
     TransactionListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionListResult' } } }

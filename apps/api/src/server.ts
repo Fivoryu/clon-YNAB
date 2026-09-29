@@ -111,6 +111,9 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     if (budgetId && account?.[1] && req.method === 'PATCH' && !account[2]) return json(res, 200, await app.renameAccount(token, budgetId, account[1], input, requestId, commandOptions(req)));
     if (budgetId && account?.[1] && account[2] === 'archive' && req.method === 'POST') return json(res, 200, await app.archiveAccount(token, budgetId, account[1], requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'categories') return json(res, 201, await app.createCategory(token, budgetId, input.name, requestId));
+    const categoryTarget = action?.match(/^categories\/([^/]+)\/target$/);
+    if (budgetId && categoryTarget?.[1] && req.method === 'PUT') return json(res, 200, await app.setCategoryTarget(token, budgetId, categoryTarget[1], input, requestId, commandOptions(req)));
+    if (budgetId && categoryTarget?.[1] && req.method === 'DELETE') return json(res, 200, await app.removeCategoryTarget(token, budgetId, categoryTarget[1], requestId, commandOptions(req)));
     const category = action?.match(/^categories\/([^/]+)(?:\/(archive))?$/);
     if (budgetId && category?.[1] && req.method === 'PATCH' && !category[2]) return json(res, 200, await app.renameCategory(token, budgetId, category[1], input.name, requestId));
     if (budgetId && category?.[1] && category[2] === 'archive' && req.method === 'POST') return json(res, 200, await app.archiveCategory(token, budgetId, category[1], requestId));

@@ -35,6 +35,9 @@ export type TransferState = {
   payee?: string | null;
   memo?: string | null;
 };
+export type TargetKind = 'MONTHLY_SET_ASIDE' | 'BALANCE_BY_DATE';
+export type TargetInput = { kind: TargetKind; amountMinor: number; targetMonth?: string };
+export type TargetState = TargetInput & { categoryId: string };
 export type FinancialState = {
   id: string;
   setupStep: 'ACCOUNT' | 'CATEGORIES' | 'COMPLETE';
@@ -43,6 +46,7 @@ export type FinancialState = {
   account: { id: string; name: string; openingBalanceMinor: number; archived?: boolean; kind?: 'CASH' | 'CHECKING'; createdAt?: string } | null;
   accounts?: AccountState[];
   categories: { id: string; name: string; archived: boolean }[];
+  targets?: TargetState[];
   events: FinancialEvent[];
   transfers?: TransferState[];
   rawEvents?: FinancialEvent[];
@@ -50,6 +54,7 @@ export type FinancialState = {
 type Work<T> = (state: FinancialState, events: FinancialEvent[], nextVersion: number, append: (event: FinancialEvent) => void) => T;
 export type FinancialCommand<T> = {
   ownerId: string; budgetId: string; command: string; input: unknown; idempotencyKey: string; expectedVersion?: number; payloadDigest?: string; work: Work<T>; persistAccounts?: boolean;
+  persistTarget?: { categoryId: string; target: TargetInput | null };
   deletionAudit?: { actorId: string; transactionId: string; requestId?: string; reason?: string };
 };
 
@@ -108,6 +113,7 @@ export class FinancialStore {
       const appended: FinancialEvent[] = [];
       const result = command.work(state, events, version + 1, event => appended.push(event));
       if (command.persistAccounts) await this.persistAccounts(tx, command.budgetId, state.accounts ?? []);
+      if (command.persistTarget) await this.persistTarget(tx, command.budgetId, command.persistTarget.categoryId, command.persistTarget.target);
       for (const transfer of state.transfers ?? []) {
         if (!previousTransfers.has(transfer.id)) await (tx as any).transfer.create({ data: { id: transfer.id, budgetId: command.budgetId, sourceAccountId: transfer.sourceAccountId, destinationAccountId: transfer.destinationAccountId, amountMinor: BigInt(transfer.amountMinor), businessDate: new Date(`${transfer.businessDate}T00:00:00Z`), month: transfer.month, createdAt: new Date(transfer.createdAt), payee: transfer.payee, memo: transfer.memo } });
       }
@@ -131,9 +137,11 @@ export class FinancialStore {
     }, { isolationLevel: 'RepeatableRead' });
   }
 
-  private async readState(tx: Pick<Prisma.TransactionClient, 'financialEvent' | 'commandReceipt' | 'transfer'>, budget: any, version: number): Promise<FinancialState> {
+  private async readState(tx: Pick<Prisma.TransactionClient, 'financialEvent' | 'commandReceipt' | 'transfer' | 'categoryTarget'>, budget: any, version: number): Promise<FinancialState> {
     const rows = await tx.financialEvent.findMany({ where: { budgetId: budget.id }, orderBy: { createdAt: 'asc' } });
     const transfers = await tx.transfer.findMany({ where: { budgetId: budget.id }, orderBy: [{ businessDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] });
+    const targetRows = await tx.categoryTarget.findMany({ where: { budgetId: budget.id }, orderBy: { categoryId: 'asc' } });
+    const targets: TargetState[] = targetRows.map((target: any) => ({ categoryId: target.categoryId, kind: target.kind, amountMinor: amount(target.amountMinor), ...(target.targetMonth === null ? {} : { targetMonth: target.targetMonth }) }));
     const rawEvents = rows.map(mapFinancialEventRow);
     const rowsAccounts = budget.accounts ?? (budget.account ? [budget.account] : []);
     const accounts = rowsAccounts.map((account: any) => ({ id: account.id, name: account.name, kind: account.kind ?? 'CASH', archived: account.archived, createdAt: account.createdAt?.toISOString?.() ?? account.createdAt, openingBalanceMinor: amount(account.openingBalances?.[0]?.amountMinor ?? 0n) }));
@@ -148,6 +156,7 @@ export class FinancialStore {
       transfers: transfers.map(mapTransferRow),
       account: alias ? { id: alias.id, name: alias.name, kind: alias.kind, archived: alias.archived, createdAt: alias.createdAt, openingBalanceMinor: alias.openingBalanceMinor } : null,
       categories: budget.categories.map((category: any) => ({ id: category.id, name: category.name, archived: category.archived })),
+      targets,
       events: foldEffectiveHistory(rawEvents), rawEvents,
     };
   }
@@ -157,6 +166,15 @@ export class FinancialStore {
       await tx.account.upsert({ where: { id: account.id }, create: { id: account.id, budgetId, name: account.name, kind: account.kind, archived: account.archived, ...(account.createdAt ? { createdAt: new Date(account.createdAt) } : {}) }, update: { name: account.name, kind: account.kind, archived: account.archived } });
       await tx.openingBalance.upsert({ where: { accountId: account.id }, create: { accountId: account.id, amountMinor: BigInt(account.openingBalanceMinor) }, update: { amountMinor: BigInt(account.openingBalanceMinor) } });
     }
+  }
+
+  private async persistTarget(tx: any, budgetId: string, categoryId: string, target: TargetInput | null) {
+    if (target === null) {
+      await tx.categoryTarget.delete({ where: { categoryId } });
+      return;
+    }
+    const data = { budgetId, categoryId, kind: target.kind, amountMinor: BigInt(target.amountMinor), targetMonth: target.targetMonth ?? null };
+    await tx.categoryTarget.upsert({ where: { categoryId }, create: data, update: data });
   }
 
   private async appendEvent(tx: Prisma.TransactionClient, budgetId: string, accountId: string | undefined, event: FinancialEvent) {
