@@ -1,6 +1,6 @@
 # Implementation Tasks: Multi-Month Trends (API Contract)
 
-Execution status: Proposal approved 2026-09-28, `report-policy/v2` approved and recorded in `report-policy-v2.md`, specs validated. Implementation is **not** authorized until the owner approves this design and task breakdown. Scope is the API contract only; the surface is a separate later change.
+Execution status: Proposal approved 2026-09-28, `report-policy/v2` approved and recorded in `report-policy-v2.md`, specs validated, design and tasks approved by the owner. Both work units are implemented, independently verified with no blockers, and committed as `944d2cc`. Scope was the API contract only; the surface is a separate later change and was not started.
 
 ## Review Workload Forecast
 
@@ -44,6 +44,6 @@ The estimate is rough because the test volume is the dominant unknown. Neither s
 
 ## Parent-owned post-apply gates
 
-- [ ] Parent review of each completed work unit: changed scope, test evidence, changed-line estimate against the 400-line budget, and rollback boundary. <!-- sdd-owner: parent -->
-- [ ] Confirm the implementation matches `report-policy-v2.md` exactly, including the absence of a pending-release field in the period total and rejection rather than clamping of an over-long range. <!-- sdd-owner: parent -->
-- [ ] Confirm the surface was not started in this change; it belongs to a separate later change. <!-- sdd-owner: parent -->
+- [x] Parent review of each completed work unit: changed scope, test evidence, changed-line estimate against the 400-line budget, and rollback boundary. Work Unit 1 measured 403 changed lines against a forecast of 170-230; the owner was shown the composition and explicitly accepted the overage. Work Unit 2 measured 388 and then 400 changed lines after the owner authorized closing two test gaps found by independent verification; the overage was explicitly accepted. Both units were verified read-only with no candidate-caused blockers. <!-- sdd-owner: parent -->
+- [x] Confirm the implementation matches `report-policy-v2.md` exactly, including the absence of a pending-release field in the period total and rejection rather than clamping of an over-long range. Confirmed: tests lock the period total's exact key set and assert no pending-release key at any nesting depth while the same scan detects it in the month entries, and all three range entry points reject an over-long range with no partial series. The independent verifier independently recounted and obtained the same result. <!-- sdd-owner: parent -->
+- [x] Confirm the surface was not started in this change; it belongs to a separate later change. Confirmed: no file under `apps/web/` was modified, and the change contains no UI artifact. <!-- sdd-owner: parent -->
