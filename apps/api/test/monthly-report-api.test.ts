@@ -44,7 +44,14 @@ test('monthly report stays owner authorized and always reports the approved poli
   assert.equal(foreign.status, 404);
   assert.equal((await foreign.json() as any).error.code, 'NOT_FOUND');
 
-  for (const query of ['', 'month=', 'month=2026-13', 'month=2026-2', 'month=2026-02&from=2026-01-01', 'month=2026-02&range=2025-12..2026-03', 'month=2026-02&month=2026-03']) {
+  // SUPERSEDE (add-multi-month-trends): `from` used to be rejected as an unknown report parameter, which is
+  // why it appears here. `from`/`to` now select the bounded range mode, so `month` combined with either one is
+  // rejected by mode exclusivity instead. The old case is kept with its new reason and no other assertion changed.
+  const queries = [
+    'month=', 'month=2026-13', 'month=2026-2', 'month=2026-02&range=2025-12..2026-03', 'month=2026-02&month=2026-03',
+    'month=2026-02&from=2026-01-01', 'month=2026-02&to=2026-02', 'from=2026-01', 'to=2026-02', '',
+  ];
+  for (const query of queries) {
     const invalid = await monthlyReport(app, token, budget.id, query);
     assert.equal(invalid.status, 400, `query ${query} must be rejected`);
     assert.equal((await invalid.json() as any).error.code, 'VALIDATION_ERROR', `query ${query} must report VALIDATION_ERROR`);

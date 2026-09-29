@@ -151,6 +151,24 @@ test('OpenAPI declares components at the document root and every component refer
   t.diagnostic(`resolved ${references.length} #/components references across ${sections.length} sections`);
 });
 
+test('OpenAPI documents the extended report route, its two modes, and its resolvable range components', () => {
+  const parameters = ['RangeFrom', 'RangeTo'];
+  const schemas = ['MultiMonthReport', 'MultiMonthReportPolicy', 'MultiMonthReportTotal', 'MultiMonthReportDisclosure', 'MultiMonthReportEnvelope'];
+  const block = operationBlock('/api/v1/budgets/{budgetId}/reports/monthly', 'get');
+
+  assert.deepEqual([...block.matchAll(/components\/parameters\/([A-Za-z]+)/g)].map(match => match[1]), ['RequestId', 'BudgetId', 'Month', 'RangeFrom', 'RangeTo']);
+  for (const name of parameters) {
+    assert.match(document, new RegExp(`^    ${name}:`, 'm'), `missing shared parameter ${name}`);
+    assert.match(block, new RegExp(`components/parameters/${name}`), `reports/monthly must reference ${name}`);
+  }
+  for (const name of schemas) {
+    assert.match(document, new RegExp(`^    ${name}:`, 'm'), `missing DTO schema ${name}`);
+    assert.match(document, new RegExp(`#/components/schemas/${name}`), `schema ${name} must be referenced so the reference-resolution check covers it`);
+  }
+  assert.match(document, /MonthlyReportSuccess: \{ description: [^\n]*oneOf: \[\{ \$ref: '#\/components\/schemas\/MonthlyReportEnvelope' \}, \{ \$ref: '#\/components\/schemas\/MultiMonthReportEnvelope' \}\]/, 'the 200 response must cover exactly the single-month and range envelopes');
+  assert.doesNotMatch(document, /reports\/months/, 'range mode extends the existing route instead of adding a sibling');
+});
+
 test('OpenAPI documents the manual CSV import/export contract and limits', () => {
   const exportBlock = operationBlock('/api/v1/budgets/{budgetId}/transactions/export', 'get');
   assert.match(exportBlock, /text\/csv/);

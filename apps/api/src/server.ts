@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError, BudgetApp, errorEnvelope } from './app.ts';
 import { parseTransactionDate, type HistoryQuery } from './planning/transaction-history.ts';
 import { CSV_MAX_BYTES } from './planning/csv.ts';
+import { monthRangeLength } from './reports/multi-month-report.ts';
 
 const json = (res: any, status: number, body: unknown, cookie?: string) => { res.writeHead(status, { 'content-type': 'application/json', ...(cookie ? { 'set-cookie': cookie } : {}) }); res.end(JSON.stringify(body)); };
 const csv = (res: any, bytes: Uint8Array) => { res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="transactions.csv"' }); res.end(Buffer.from(bytes)); };
@@ -46,16 +47,27 @@ export const parseHistoryQuery = (url: URL): HistoryQuery => {
   return filter;
 };
 
-export const parseMonthlyReportQuery = (url: URL): string => {
-  const seen = new Set<string>(); let requested: string | undefined;
+/** The two mutually exclusive modes of `GET .../reports/monthly`, discriminated before any data is read. */
+export type MonthlyReportQuery = { mode: 'month'; month: string } | { mode: 'range'; from: string; to: string };
+
+export const parseMonthlyReportQuery = (url: URL): MonthlyReportQuery => {
+  const seen = new Set<string>(); const values: Record<string, string> = {};
   for (const [key, value] of url.searchParams.entries()) {
-    if (key !== 'month' || seen.has(key)) throw new ApiError('VALIDATION_ERROR', 'report query contains an unknown or repeated parameter');
+    if (!['month', 'from', 'to'].includes(key) || seen.has(key)) throw new ApiError('VALIDATION_ERROR', 'report query contains an unknown or repeated parameter');
     seen.add(key);
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', 'month must be YYYY-MM');
-    requested = value;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new ApiError('VALIDATION_ERROR', `${key} must be YYYY-MM`);
+    values[key] = value;
   }
-  if (!requested) throw new ApiError('VALIDATION_ERROR', 'month is required');
-  return requested;
+  const { month, from, to } = values;
+  if (month !== undefined && from === undefined && to === undefined) return { mode: 'month', month };
+  if (from !== undefined && to !== undefined && month === undefined) {
+    // Reject a malformed, inverted, or over-long range here so no state is loaded for it.
+    try { monthRangeLength(from, to); } catch (error) { throw new ApiError('VALIDATION_ERROR', error instanceof Error ? error.message : 'month range is invalid'); }
+    return { mode: 'range', from, to };
+  }
+  if (month !== undefined) throw new ApiError('VALIDATION_ERROR', 'month cannot be combined with from or to');
+  if (from !== undefined || to !== undefined) throw new ApiError('VALIDATION_ERROR', 'from and to must be supplied together');
+  throw new ApiError('VALIDATION_ERROR', 'month, or from and to, is required');
 };
 
 export const createServer = (app: BudgetApp) => createHttpServer(async (req, res) => {
@@ -114,7 +126,12 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     if (budgetId && req.method === 'POST' && action === 'allocations') return json(res, 200, await app.assign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/unassign') return json(res, 200, await app.unassign(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'allocations/move') return json(res, 200, await app.move(token, budgetId, input, requestId, commandOptions(req)));
-    if (budgetId && req.method === 'GET' && action === 'reports/monthly') return json(res, 200, await app.getMonthlyReport(token, budgetId, parseMonthlyReportQuery(url), requestId));
+    if (budgetId && req.method === 'GET' && action === 'reports/monthly') {
+      const report = parseMonthlyReportQuery(url);
+      return json(res, 200, await (report.mode === 'month'
+        ? app.getMonthlyReport(token, budgetId, report.month, requestId)
+        : app.getMultiMonthReport(token, budgetId, report.from, report.to, requestId)));
+    }
     if (budgetId && req.method === 'GET' && action === 'summary') return json(res, 200, await app.getFinancialSummary(token, budgetId, url.searchParams.get('month') || '', requestId));
     if (budgetId && req.method === 'GET' && action === 'dashboard') return json(res, 200, await app.getDashboard(token, budgetId, url.searchParams.get('month') || '', requestId));
     return json(res, 404, { error: { code: 'NOT_FOUND', message: 'Resource not found', requestId } });

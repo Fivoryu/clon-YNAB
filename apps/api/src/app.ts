@@ -3,6 +3,7 @@ import { applyAssignment, calculateAccountBalances, moveAssignment, monthForDate
 import { assertEligibleTransaction, buildDeleteTombstone, buildReplacement, createHistoryCursor, isAccountOnlyHistoryFilter, normalizeMetadata, normalizeMetadataPatch, pageHistoryItems, parseHistoryCursor, parseTransactionDate, type HistoryFilter, type HistoryQuery } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
 import { projectMonthlyReport, type MonthlyReportProjection } from './reports/monthly-report.ts';
+import { monthRangeLength, projectMultiMonthReport, type MultiMonthReport } from './reports/multi-month-report.ts';
 import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
 import { FinancialStore, PersistenceError, type FinancialEvent, type FinancialState, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
@@ -381,6 +382,22 @@ export class BudgetApp {
     try {
       const state = await this.financialStore.load(user.id, budgetId);
       return ok(projectMonthlyReport(state, requested), requestId);
+    } catch (error) {
+      if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
+      throw error;
+    }
+  }
+  /**
+   * Bounded range mode. The range is validated before any state is read, then exactly one state load serves
+   * every month, so the whole series and its reported revision come from one snapshot. Range helper violations
+   * are plain errors and are mapped to `VALIDATION_ERROR` the way `parseHistoryCursor` is mapped.
+   */
+  async getMultiMonthReport(token: string, budgetId: string, from: string, to: string, requestId?: string): Promise<Envelope<MultiMonthReport>> {
+    const user = await this.authenticate(token); await this.requireBudget(token, budgetId);
+    try { monthRangeLength(from, to); } catch (error) { throw new ApiError('VALIDATION_ERROR', error instanceof Error ? error.message : 'month range is invalid'); }
+    try {
+      const state = await this.financialStore.load(user.id, budgetId);
+      return ok(projectMultiMonthReport(state, from, to), requestId);
     } catch (error) {
       if (error instanceof PersistenceError) throw new ApiError(error.code, error.message);
       throw error;
