@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://ynab:ynab_local@localhost:5432/ynab_dev?schema=public';
+// Matches the documented local Compose mapping in docker-compose.yml and README.md.
+const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://ynab:ynab_local@localhost:5434/ynab_dev?schema=public';
 const reuseExistingServer = !process.env.CI;
 
 export default defineConfig({
