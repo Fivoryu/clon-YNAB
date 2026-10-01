@@ -8,7 +8,7 @@ Priority and delivery status are separate: **P0**, **P1**, and **P2** express im
 
 ## Bounded areas
 
-**Clone decision:** The bounded first vertical slice is one authenticated user's budget, one cash/checking-style account with an explicit opening balance, categories, realized income/spending, monthly allocation, RTA/Available, dashboard/month summary, and positive rollover. Its transaction boundary is one realized income command and one categorized spending command with positive input amounts and posted/working state only. Credit cards, broader account types, splits, transfers, ordinary edit/delete, future income, refunds/reimbursements/returns, closed-month corrections, reconciliation, cleared/pending/uncleared state, and overspending are later MVP slice behavior; targets and scheduled transactions are deferred/out of MVP.
+**Clone decision:** The bounded first vertical slice was one authenticated user's budget, one cash/checking-style account with an explicit opening balance, categories, realized income/spending, monthly allocation, RTA/Available, dashboard/month summary, and positive rollover. Its transaction boundary was one realized income command and one categorized spending command with positive input amounts and `POSTED`/`WORKING` status. Later phases have delivered multiple accounts and transfers, ordinary transaction edit/delete, cleared-state transitions, and manual reconciliation as separate account-history capabilities. Credit cards, loans, broader account types, splits, future income, refunds/reimbursements/returns, closed-month corrections, pending transaction status, and overspending remain deferred or open; scheduled and repeating transactions remain deferred.
 
 ### Identity and access
 
@@ -66,7 +66,7 @@ The first implementation should treat these as separate application-level aggreg
 | Aggregate | Main commands | Important consistency boundary |
 |---|---|---|
 | Budget structure | Create/rename/archive group or category | Category belongs to the selected budget. |
-| Account | Create, rename, reconcile, close | Account balance is derived from its transactions and adjustments. |
+| Account | Create, rename, reconcile, close | Working and cleared balances are derived from effective account history; reconciliation is a delivered account command. |
 | Transaction | Create, edit, delete, split, transfer | Account and budget effects change atomically. |
 | Monthly plan | Assign, unassign, move money | Allocation changes never mint money; the first slice permits an explicit negative Ready to Assign state and corrects it through unassignment or a move-back allocation to the unassigned pool. |
 | Scheduled transaction | Create, pause, generate | Generated transactions must be idempotent. |
@@ -90,9 +90,11 @@ For a category and month, distinguish these values:
 
 For an account, distinguish:
 
-- **Cleared balance** — total of transactions marked cleared.
-- **Uncleared balance** — total of transactions not yet cleared.
-- **Working balance** — the account's current calculated balance.
+- **Cleared balance** — the opening balance, treated as cleared, plus the signed effects of effective account events whose derived state is `CLEARED` or `RECONCILED`. A reconciliation adjustment is included in the account balance projection as an account-state correction.
+- **Uncleared balance** — the signed effects of effective account events in `UNCLEARED` state; the opening balance is not uncleared.
+- **Working balance** — the opening balance plus the signed effects of all effective account events, regardless of cleared state.
+- **Cleared state** — the derived, never-stored value `RECONCILED` when `reconciled` is true, otherwise `CLEARED` when `cleared` is true, otherwise `UNCLEARED`; the underlying `cleared` and `reconciled` flags are persisted. The invariant is `reconciled ⇒ cleared ⇒ not WORKING`.
+- **Surface split** — the account projection exposes `clearedBalanceMinor` beside its working balance. Embedded report accounts deliberately omit that field, and reports expose no cleared or reconciliation state.
 
 For the budget, distinguish:
 
@@ -120,7 +122,7 @@ For the budget, distinguish:
 
 ### Transfer
 
-**Clone decision — later MVP slice:** A transfer links two distinct accounts in the same budget, decreases the source and increases the destination by equal opposite amounts, does not create ordinary category spending Activity, and commits both sides atomically. Retrying the same transfer request must not duplicate its effects. This P0 behavior remains outside the bounded first slice.
+**Clone decision — delivered beyond the bounded first slice:** A transfer links two distinct accounts in the same budget, decreases the source and increases the destination by equal opposite amounts, does not create ordinary category spending Activity, and commits both sides atomically. Retrying the same transfer request must not duplicate its effects. This P0 behavior was outside the bounded first slice.
 
 ### Refund or return
 
@@ -128,7 +130,7 @@ An **Open question** for later slices. Refunds and returns are outside the bound
 
 ### Edit and delete
 
-**Clone decision — later MVP slice:** Editing a posted, non-reconciled transaction may change its amount, payee, category, date, cleared state, memo, repetition, or account; the account and budget effects must be recalculated and replaced atomically.
+**Clone decision — later MVP slice:** Editing a posted, non-reconciled transaction may change its amount, payee, category, date, memo, repetition, or account; the account and budget effects must be recalculated and replaced atomically. Cleared-state changes use the separate account-history transition, not ordinary transaction editing.
 
 **Clone decision — later MVP slice:** Deleting a posted, non-reconciled transaction requires explicit confirmation, removes its account and plan effects atomically, and records the minimum authorized audit identity. This follows the observed public behavior in [How to Edit and Delete Transactions](https://support.ynab.com/en_us/how-to-edit-and-delete-transactions-BJG4oS1s).
 
@@ -138,7 +140,7 @@ An **Open question** for later slices. Refunds and returns are outside the bound
 
 ### Starting balance and reconciliation adjustment
 
-**Clone decision:** The first slice supports an explicit opening balance as realized cash; it is not an invented opening pool. Reconciliation adjustments are later MVP slice corrections rather than ordinary merchant spending and require an explicit reason and audit trail.
+**Clone decision:** The first slice supports an explicit opening balance as realized cash; it is not an invented opening pool. The delivered reconciliation adjustment is a non-assignable account-state correction, not ordinary merchant spending. A mismatch adjustment requires explicit confirmation and a reason; its effect is reflected in the account's working and cleared balances, including the aggregate working account-balance field in a summary/report. It is not exposed as a separate adjustment measure and does not enter category activity, assignments, or Ready to Assign. Reports expose no cleared balance or cleared/reconciliation state, and the RTA inputs and formula remain unchanged. The resulting account-balance-versus-Ready-to-Assign divergence is documented and remains unresolved inside the plan.
 
 ## Critical use case: record spending
 
@@ -162,7 +164,8 @@ Validation rules:
 - archived accounts cannot receive new ordinary transactions;
 - posted/working is the only supported transaction state in this slice;
 - the first slice accepts only the supported cash/checking-style account and one category for spending;
-- cleared, pending, uncleared, and reconciliation behavior, as well as splits, transfers, ordinary edit/delete, cards, refunds, reimbursements, and returns, remain later MVP slice policies.
+- cleared/uncleared transitions and manual reconciliation are delivered beyond the first-slice transaction-creation flow as separate account-history operations; only `POSTED` items can be cleared, and `PENDING` is not a supported transaction status;
+- transfers and ordinary edit/delete are also delivered outside that first-slice flow; splits, cards, refunds, reimbursements, and returns remain later MVP policies.
 
 ## Critical use case: assign money
 
@@ -178,11 +181,15 @@ Assignments must be modeled as auditable movements or immutable entries rather t
 
 ## Reconciliation behavior
 
-**Observed:** Reconciliation compares the account state with the bank state, confirms the cleared balance, locks reconciled transactions, and reduces duplicate imports. Source: [Reconciling Accounts](https://support.ynab.com/en_us/reconciling-accounts-a-guide-BJFE3fHys).
+**Observed:** Public guidance describes comparing an account with bank state, confirming the cleared balance, locking reconciled transactions, and reducing duplicate imports. This is an observation about the external product, not a claim that this clone matches imports against reconciled history. Source: [Reconciling Accounts](https://support.ynab.com/en_us/reconciling-accounts-a-guide-BJFE3fHys).
 
-**Clone decision:** Manual reconciliation is later MVP/P1 scope, not part of the bounded first slice. When accepted, it uses an explicit confirmed cleared balance and an audit trail; reconciled transactions are protected from hard deletion by default.
+**Clone decision — delivered beyond the bounded first slice:** Manual reconciliation compares the server-derived cleared balance with an external balance the owner confirms. A match records the reconciliation and locks cleared history without an adjustment. A mismatch without explicit confirmation returns `CONFLICT`, discloses the difference, and changes nothing. A confirmed mismatch requires a reason and creates exactly one non-assignable account-state adjustment for the exact difference before locking the cleared history. Archived accounts are rejected.
 
-**Open question:** Define the exact adjustment, unlock, correction, and import-matching policies for reconciled history. Do not treat this conceptual model as a claim about YNAB's internal implementation.
+The adjustment changes the reconciled account's working and cleared balances; its working-balance effect is reflected in the aggregate account-balance field in a summary/report, but it is not exposed as a separate adjustment measure. It does not enter Ready to Assign or category values, and the RTA inputs and formula remain unchanged. The resulting divergence between aggregate account balance and Ready to Assign is a documented limit; this phase does not resolve it inside the plan. The account projection exposes the cleared balance, but report-embedded accounts and report responses do not expose cleared balance, cleared/reconciliation state, or a separate adjustment field.
+
+Reconciled history is terminal in this phase: ordinary edits, deletes, and cleared-state transitions are rejected, and there is no unlock, revert, or correction path.
+
+**Open question:** Unlocking, reverting, or correcting reconciled history; import and duplicate matching against reconciled history; presenting cleared balance or reconciliation state in reports; and resolving the account-versus-Ready-to-Assign divergence remain open. Do not treat this conceptual model as a claim about YNAB's internal implementation.
 
 ## Consistency requirements
 
@@ -202,6 +209,6 @@ Assignments must be modeled as auditable movements or immutable entries rather t
 3. Exact later MVP slice formulas for Ready to Assign, Available, rollover, and credit-card payment movement.
 4. Overspending correction behavior for cash and credit-card accounts.
 5. Refund and reimbursement semantics.
-6. Reconciliation adjustment, unlock, and import-matching rules.
+6. Unlocking, reverting, or correcting reconciled history; import and duplicate matching against reconciled history; future report presentation; and any policy for resolving the account-versus-Ready-to-Assign divergence.
 7. Deletion versus voiding for reconciled transactions, including any compensating adjustment or controlled unlock.
 8. Audit retention period, export/report presentation, and immutability.

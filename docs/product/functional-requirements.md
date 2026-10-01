@@ -4,7 +4,7 @@
 
 This document defines the functional contract for the academic YNAB-style budgeting clone. It turns the accepted MVP boundary and the actor/use-case catalogue into stable, reviewable requirements without claiming parity with the commercial product or knowledge of its private schema, formulas, or implementation.
 
-The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support posted/working state only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Broader MVP behavior remains documented for later slices: other account types, splits, transfers, ordinary edit/delete flows, reconciliation, cleared or pending state, overspending variants, refunds/reimbursements/returns, scheduled transactions, and advanced credit-card behavior.
+The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support `POSTED`/`WORKING` status only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Later phases have since delivered multiple accounts and transfers, transaction edit/delete, and cleared-state transitions with manual reconciliation as separate account-history capabilities. Still-open or deferred behavior includes broader account types, splits, pending transaction status, overspending variants, refunds/reimbursements/returns, scheduled transactions, and advanced card/loan behavior.
 
 For the bounded first slice, the budget engine is authoritative for `Ready to Assign`, `Assigned`, `Activity`, `Available`, positive rollover, and their derived summaries. Later-slice overspending classifications and special formulas remain questions in [Budget engine research](../research/budget-engine.md#open-questions); this document does not silently choose them.
 
@@ -86,7 +86,7 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 - **Name:** Manage accounts and account balances
 - **Priority:** P0
 - **Related actor:** Authenticated user; Budget system/engine.
-- **Description:** **Clone decision:** The first slice shall create, rename, archive, list, and inspect one owned cash/checking-style account with an explicit opening balance and an authoritative working balance. Cleared/uncleared balances and broader account types are later MVP slice behavior.
+- **Description:** **Clone decision:** The bounded first slice creates, renames, archives, lists, and inspects one owned cash/checking-style account with an explicit opening balance and authoritative working balance. The delivered account projection also exposes its server-derived cleared balance; a report's embedded account list deliberately does not. Broader account types remain later MVP scope.
 - **Preconditions:** The user is authorized for the budget; the account belongs to that budget for update/read operations; account names, types, and opening values are valid.
 - **Expected flow:**
   1. The user requests an account operation.
@@ -98,12 +98,12 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
   - **Inferred:** An account answers where money is held; a category answers what money is for.
   - **Clone decision:** Archived accounts cannot receive new ordinary transactions.
   - **Clone decision:** Historical references remain explainable after rename or archive.
-  - **Open question:** Broader account types, account closure, cleared/uncleared behavior, and positive credit-card balance treatment remain unresolved in [Budget engine research](../research/budget-engine.md#open-questions).
+  - **Open question:** Broader account types, account closure, positive credit-card balance treatment, and whether a future report surface should present cleared or reconciliation information remain unresolved in [Budget engine research](../research/budget-engine.md#open-questions).
 - **Possible errors:** Missing access → `UNAUTHENTICATED` or `FORBIDDEN`; absent account → `NOT_FOUND`; invalid name/type/lifecycle transition → `VALIDATION_ERROR`; conflicting name or stale update → `CONFLICT`; persistence failure → `INTERNAL_ERROR`.
 - **Acceptance criteria:**
   - **Given** an authorized user and a valid account request **When** the account is created **Then** it belongs only to the selected budget and is visible in that budget's account list.
   - **Given** an archived account **When** the user records a new ordinary transaction against it **Then** the system rejects the command with `VALIDATION_ERROR`.
-  - **Given** authoritative first-slice transaction history **When** the account summary is requested **Then** the working balance is derived consistently from that history; cleared and uncleared balances remain later MVP slice behavior.
+  - **Given** authoritative account history **When** the account projection is requested **Then** working and cleared balances are derived from that history, with the opening balance treated as cleared; an embedded report account omits `clearedBalanceMinor`.
 - **Traceability:** UC-02, UC-03, UC-07, UC-08, UC-10, UC-13, UC-15. MVP: [Account and budget setup](mvp-scope.md#account-and-budget-setup), [Transactions](mvp-scope.md#transactions). Architecture: [Domain model](../architecture/domain-model.md#accounts-and-ledger), [System architecture](../architecture/system-overview.md#backend-module-responsibilities).
 
 ## FR-CATEGORY — Manage category groups and categories
@@ -169,7 +169,7 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 - **Name:** Record first-slice transactions; maintain later transaction variants
 - **Priority:** P0
 - **Related actor:** Authenticated user; Budget system/engine.
-- **Description:** **Clone decision:** The bounded first slice supports exactly one realized income command and one categorized cash/checking spending command. Both commands accept positive input amounts and support posted/working state only. Transaction dates are date-only business dates interpreted in the budget's explicit IANA timezone; event timestamps are UTC, and the browser timezone does not decide month boundaries. Account-side and plan-side effects commit atomically or not at all. Splits, transfers, ordinary edit/delete, cards, refunds/reimbursements/returns, reconciliation, and cleared-state behavior are later MVP slice policies; this P0 requirement does not make them first-slice delivery.
+- **Description:** **Clone decision:** The bounded first slice supports exactly one realized income command and one categorized cash/checking spending command. Both commands accept positive input amounts and support `POSTED`/`WORKING` status only. Transaction dates are date-only business dates interpreted in the budget's explicit IANA timezone; event timestamps are UTC, and the browser timezone does not decide month boundaries. Account-side and plan-side effects commit atomically or not at all. Transfers, ordinary edit/delete, cleared-state transitions, and manual reconciliation have since been delivered as separate capabilities; they remain outside this first-slice creation flow. Splits, cards, refunds/reimbursements/returns, and pending transaction status remain deferred or unsupported.
 - **Preconditions:** The user is authorized; the referenced account belongs to the same budget and is writable; the spending category belongs to the same budget and is writable; the command's positive amount, date-only business date, and payee/source are valid; the command carries an idempotency key.
 - **Expected flow:**
   1. The user submits a realized income or categorized cash/checking spending command with a positive amount.
@@ -181,7 +181,7 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
   - **Observed:** Public guidance describes recording/importing transactions, editing fields, and deleting a transaction with its account and plan effects. These observations do not define this clone's first-slice policy.
   - **Clone decision:** Income increases the realized account working balance and the assignable pool.
   - **Clone decision:** Spending decreases the supported account working balance and signed category `Activity`; `Available` is recalculated from authoritative history. Spending already funded by an assignment is not subtracted from RTA a second time.
-  - **Clone decision:** The first slice accepts only posted/working transactions on one cash/checking-style account and one category for spending. Cleared, pending, uncleared, and reconciliation behavior are later MVP slice/P1 scope.
+  - **Clone decision:** The first slice accepts only `POSTED`/`WORKING` transactions on one cash/checking-style account and one category for spending. Clearing and reconciliation are delivered beyond that first-slice boundary as separate account-history operations; a `WORKING` item cannot be cleared, and `PENDING` is not a supported transaction status.
   - **Clone decision:** For these financial creation commands, the same idempotency key plus the same command payload replays the same logical result; the same key plus a different payload returns `CONFLICT`.
   - **Clone decision:** The server, not the client, calculates balances and effects, and authoritative transaction history plus derived summaries have a deterministic rebuild path.
   - **Clone decision — later MVP slice:** When split transactions are accepted, the parent amount shall equal the split-line sum exactly in integer minor units, the account shall change once, category effects shall apply per line, and the command shall be atomic.
@@ -198,7 +198,7 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
   - **Given** the same authoritative transaction history **When** account and plan summaries are rebuilt **Then** the same values are produced and no client-provided balance is treated as authoritative.
   - **Later-MVP criterion — Given** a split transaction **When** it is accepted **Then** its lines sum exactly to the parent amount in integer minor units, the account changes once, each line applies its category effect, and all effects commit atomically.
   - **Later-MVP criterion — Given** a posted, non-reconciled transaction **When** it is edited or explicitly confirmed for deletion **Then** the affected effects are recalculated or removed atomically and deletion records the minimum authorized audit identity.
-  - **Later-slice criterion — Given** a transfer, a card transaction, a refund/return, or reconciliation state **When** it is requested **Then** the system follows the separately documented later policy rather than implying first-slice support.
+  - **Scope criterion — Given** a transfer or reconciliation command **When** it is requested **Then** its separately delivered requirement applies and this first-slice income/spending requirement is not read as its implementation; card transactions and refund/return behavior remain deferred.
 - **Traceability:** UC-07, UC-08, UC-09, UC-10, UC-11, UC-12, UC-13, UC-15, UC-16. MVP: [Transactions](mvp-scope.md#transactions); first slice covers only the realized income/categorized spending path. Architecture/decision: [Domain model](../architecture/domain-model.md#transaction-types), [System architecture](../architecture/system-overview.md#request-flow), [ADR-002](../decisions/ADR-002-financial-history.md#decision). NFR: NFR-DATA, NFR-REL, NFR-OBS, NFR-TIME.
 
 ## FR-TRANSFER — Transfer money between accounts
@@ -207,7 +207,7 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 - **Name:** Record account-to-account transfers
 - **Priority:** P0
 - **Related actor:** Authenticated user; Budget system/engine.
-- **Description:** **Clone decision:** The system shall record a linked transfer between two distinct owned accounts, decreasing the source and increasing the destination by equal opposite amounts without ordinary spending-category activity. **Clone decision:** Transfers are a later MVP slice P0 requirement and are outside the approved bounded first vertical/Group 2B transaction slice.
+- **Description:** **Clone decision:** The delivered transfer capability records a linked movement between two distinct owned accounts, decreasing the source and increasing the destination by equal opposite amounts without ordinary spending-category activity. It was outside the bounded first vertical/Group 2B slice and is delivered separately; this requirement does not expand the first-slice income/spending flow.
 - **Preconditions:** The user is authorized; both accounts belong to the same budget and are writable; accounts are distinct; amount and date are valid.
 - **Expected flow:**
   1. The user selects source and destination accounts and enters amount/date/memo.
@@ -233,26 +233,32 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 - **Name:** Reconcile cleared account history
 - **Priority:** P1
 - **Related actor:** Authenticated user; Bank/financial institution is an external reference only; Budget system/engine.
-- **Description:** **Observed:** Public guidance describes comparing an account with bank state, confirming cleared balance, protecting reconciled transactions, and reducing duplicate-import risk. **Clone decision:** Manual reconciliation is a later MVP slice/P1 capability, outside the bounded first slice, and shall not require bank credentials or automatic synchronization.
-- **Preconditions:** The user is authorized; the account exists; the user has an external reference balance; transactions have cleared-state values.
+- **Description:** **Clone decision:** Manual account reconciliation is delivered beyond the bounded first slice. It compares the server-derived account cleared balance with an externally confirmed balance, records an audit event, and locks the cleared history. It requires no bank credentials or synchronization. Public references to reduced duplicate-import risk describe observed external product guidance only; this clone does not implement import or duplicate matching against reconciled history.
+- **Preconditions:** The user is authorized; the account exists and is not archived; the user has an external reference balance; eligible history has been marked cleared.
 - **Expected flow:**
-  1. The user reviews or marks transactions cleared.
-  2. The system calculates the cleared balance.
-  3. The user enters or confirms the external cleared balance.
-  4. The system validates the comparison under the selected policy.
-  5. On success, the system records a reconciliation event and protects reconciled transactions by default.
+  1. The user marks eligible posted income, spending, or transfer history cleared from the account activity surface.
+  2. The system calculates the server-derived cleared balance for the account.
+  3. The user enters the external cleared balance.
+  4. If the balances match, the system records the reconciliation and locks cleared history without creating an adjustment.
+  5. If they differ and the user has not explicitly confirmed an adjustment, the system returns `CONFLICT`, discloses the difference, and changes nothing.
+  6. If the user explicitly confirms a mismatch, the system requires a reason, creates exactly one adjustment for the difference, records the reconciliation, and locks the cleared history.
 - **Business rules:**
-  - **Clone decision:** The bank is a manual reference in MVP; no credentials or automatic import are required.
-  - **Clone decision:** Posted/working is first-slice only. Cleared, pending, and uncleared transitions, plus cleared-vs-working balance effects, are later MVP slice/P1 behavior and are blocking dependencies only before reconciliation is implemented.
-  - **Clone decision:** A successful reconciliation records an audit event and confirmed cleared balance.
-  - **Clone decision:** Reconciled history cannot be hard-deleted by default, and ordinary edit/delete paths return `CONFLICT`.
-  - **Open question:** Adjustment transaction, unlock, correction, matching, and import policies remain unresolved in [ADR-002](../decisions/ADR-002-financial-history.md#open-questions).
-- **Possible errors:** Unauthorized account → `FORBIDDEN`; missing account → `NOT_FOUND`; invalid external amount/state → `VALIDATION_ERROR`; mismatch or protected change → `CONFLICT`; audit/persistence failure → `INTERNAL_ERROR`.
+  - **Clone decision:** The bank is a manual reference; no credentials or automatic synchronization are required.
+  - **Clone decision:** `clearedState` is derived as `UNCLEARED`, `CLEARED`, or `RECONCILED`; `reconciled ⇒ cleared ⇒ not WORKING`. A `WORKING` item cannot be cleared. Transfer effects transition together.
+  - **Clone decision:** A matching reconciliation records the confirmed and observed balances and locks the eligible cleared history without an adjustment.
+  - **Clone decision:** A mismatching balance without explicit confirmation returns `CONFLICT` with the difference and mutates nothing. A confirmed mismatch requires a non-empty reason and creates exactly one adjustment for exactly the difference.
+  - **Clone decision:** The adjustment is a non-assignable account-state correction. It changes that account's working and cleared balances, so the working/aggregate account-balance fields reflect the adjustment in account and report projections. It does not change category activity, assignments, or Ready to Assign (RTA inputs and formula remain unchanged); reports expose no cleared balance, cleared/reconciliation state, or separate adjustment measure. The resulting account-balance-versus-Ready-to-Assign divergence is documented and is not resolved inside the plan by this phase.
+  - **Clone decision:** Reconciled history is terminal in this phase. Ordinary edit/delete and cleared-state transitions return `CONFLICT`; there is no unlock, revert, or correction path.
+  - **Open question:** Unlocking, reverting, or correcting reconciled history; import and duplicate matching against reconciled history; presenting cleared balance or reconciliation state in reports; audit retention/immutability; and resolving the account-versus-Ready-to-Assign divergence remain open.
+- **Possible errors:** Unauthorized account → `FORBIDDEN`; missing account → `NOT_FOUND`; archived account or protected change → `CONFLICT`; invalid external amount or missing adjustment reason → `VALIDATION_ERROR`; unconfirmed mismatch → `CONFLICT` with difference and no mutation; audit/persistence failure → `INTERNAL_ERROR`.
 - **Acceptance criteria:**
-  - **Given** cleared transactions and an external balance that matches under the policy **When** the user confirms reconciliation **Then** the system records the event, confirms the balance, and protects the reconciled history.
-  - **Given** a mismatching external balance **When** reconciliation is submitted **Then** the system reports the mismatch without silently creating money or changing transactions.
-  - **Given** a reconciled transaction **When** the user edits or deletes it through an ordinary path **Then** the system returns `CONFLICT`.
-- **Traceability:** UC-15, UC-03, UC-11, UC-12. MVP: later MVP slice/P1; see [Transactions](mvp-scope.md#transactions) and the later acceptance criteria. Architecture/decision: [Domain model](../architecture/domain-model.md#reconciliation-behavior), [System architecture](../architecture/system-overview.md#security-boundaries), [ADR-002](../decisions/ADR-002-financial-history.md#decision).
+  - **Given** a cleared balance matching the external balance **When** the user reconciles the account **Then** the system records the event and locks the cleared history without an adjustment.
+  - **Given** a mismatching external balance without explicit adjustment confirmation **When** reconciliation is submitted **Then** the system returns `CONFLICT`, discloses the difference, and changes neither account nor history.
+  - **Given** a mismatching external balance with explicit confirmation and a reason **When** reconciliation is submitted **Then** the system records exactly one non-assignable adjustment for the exact difference, records the reconciliation, and locks the cleared history.
+  - **Given** a confirmed adjustment without a reason or a request to reconcile an archived account **When** it is submitted **Then** the system rejects it and creates no reconciliation or adjustment.
+  - **Given** a reconciled transaction **When** the user edits, deletes, or changes its cleared state through ordinary account-history paths **Then** the system returns `CONFLICT`; unlocking, reverting, and correcting reconciled history are unavailable.
+  - **Given** a public account projection and a report response **When** their account fields are inspected **Then** the account projection exposes `clearedBalanceMinor`, while embedded report accounts and report measures expose no cleared or reconciliation field.
+- **Traceability:** UC-15, UC-03, UC-11, UC-12. MVP: delivered beyond the bounded first slice; see [Transactions](mvp-scope.md#transactions) and [Later-slice acceptance criteria](mvp-scope.md#later-slice-acceptance-criteria). Architecture/decision: [Domain model](../architecture/domain-model.md#reconciliation-behavior), [System architecture](../architecture/system-overview.md#security-boundaries), [ADR-002](../decisions/ADR-002-financial-history.md#decision).
 
 ## FR-ROLLOVER — Monthly rollover
 

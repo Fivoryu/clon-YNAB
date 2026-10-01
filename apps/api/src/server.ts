@@ -110,6 +110,8 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     const account = action?.match(/^accounts\/([^/]+)(?:\/(archive))?$/);
     if (budgetId && account?.[1] && req.method === 'PATCH' && !account[2]) return json(res, 200, await app.renameAccount(token, budgetId, account[1], input, requestId, commandOptions(req)));
     if (budgetId && account?.[1] && account[2] === 'archive' && req.method === 'POST') return json(res, 200, await app.archiveAccount(token, budgetId, account[1], requestId, commandOptions(req)));
+    const reconciliation = action?.match(/^accounts\/([^/]+)\/reconciliation$/);
+    if (budgetId && reconciliation?.[1] && req.method === 'POST') return json(res, 201, await app.reconcileAccount(token, budgetId, reconciliation[1], input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'categories') return json(res, 201, await app.createCategory(token, budgetId, input.name, requestId));
     const categoryTarget = action?.match(/^categories\/([^/]+)\/target$/);
     if (budgetId && categoryTarget?.[1] && req.method === 'PUT') return json(res, 200, await app.setCategoryTarget(token, budgetId, categoryTarget[1], input, requestId, commandOptions(req)));
@@ -122,6 +124,8 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     if (budgetId && release?.[1] && req.method === 'POST') return json(res, 200, await app.releaseIncome(token, budgetId, release[1], requestId, commandOptions(req)));
     if (budgetId && req.method === 'POST' && action === 'spending') return json(res, 201, await app.recordSpending(token, budgetId, input, requestId, commandOptions(req)));
     if (budgetId && req.method === 'GET' && action === 'transactions') { await app.authenticate(token); return json(res, 200, await app.listTransactions(token, budgetId, parseHistoryQuery(url), requestId)); }
+    const clearedTransaction = action?.match(/^transactions\/([^/]+)\/cleared$/);
+    if (budgetId && clearedTransaction?.[1] && req.method === 'PATCH') return json(res, 200, await app.setTransactionCleared(token, budgetId, clearedTransaction[1], input, requestId, commandOptions(req)));
     const transaction = action?.match(/^transactions\/([^/]+)$/);
     if (budgetId && transaction?.[1] && req.method === 'GET') return json(res, 200, await app.getTransaction(token, budgetId, transaction[1], requestId));
     if (budgetId && transaction?.[1] && req.method === 'PATCH') return json(res, 200, await app.editTransaction(token, budgetId, transaction[1], input, requestId, commandOptions(req)));

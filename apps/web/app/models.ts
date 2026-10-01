@@ -7,6 +7,7 @@ export type Account = {
   archived: boolean;
   openingBalanceMinor: number;
   balanceMinor: number;
+  clearedBalanceMinor: number;
 };
 
 export type Budget = {
@@ -51,10 +52,12 @@ export type CategorySummary = Category & {
   target?: CategoryTargetState;
 };
 
+export type SummaryAccount = Omit<Account, 'clearedBalanceMinor'>;
+
 export type Summary = {
   month: string;
   accountBalanceMinor: number;
-  accounts: Account[];
+  accounts: SummaryAccount[];
   rta: {
     amountMinor: number;
     releasedIncomeMinor: number;
@@ -97,6 +100,7 @@ export type HistoryItem =
       memo: string | null;
       state: 'ELIGIBLE' | 'PROTECTED';
       accountId?: string;
+      clearedState: 'UNCLEARED' | 'CLEARED' | 'RECONCILED';
     }
   | {
       transactionId: string;
@@ -108,7 +112,12 @@ export type HistoryItem =
       sourceAccount: Pick<Account, 'id' | 'name' | 'kind' | 'archived'>;
       destinationAccount: Pick<Account, 'id' | 'name' | 'kind' | 'archived'>;
       createdAt: string;
+      clearedState: 'UNCLEARED' | 'CLEARED' | 'RECONCILED';
     };
+
+export function isHistoryItemEligibleForClearing(item: HistoryItem): boolean {
+  return item.kind === 'TRANSFER' || item.state === 'ELIGIBLE';
+}
 
 export type HistoryResponse = { items: HistoryItem[]; version: number; nextCursor: string | null };
 export type AccountHistorySnapshot = {

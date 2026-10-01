@@ -1,7 +1,14 @@
 export type MinorUnits = number;
 export type AccountKind = 'CASH' | 'CHECKING';
-export type AccountState = { id: string; name: string; kind: AccountKind; archived: boolean; createdAt?: string; openingBalanceMinor: MinorUnits; balanceMinor?: MinorUnits };
-export type AccountBalanceEvent = { accountId?: string; kind: 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN'; amountMinor: MinorUnits };
+export type AccountState = { id: string; name: string; kind: AccountKind; archived: boolean; createdAt?: string; openingBalanceMinor: MinorUnits; balanceMinor?: MinorUnits; clearedBalanceMinor?: MinorUnits };
+export type AccountBalanceEvent = { accountId?: string; kind: 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'RECONCILIATION_ADJUSTMENT'; amountMinor: MinorUnits; cleared?: boolean };
+export type ClearedState = { status?: 'POSTED' | 'WORKING'; cleared?: boolean; reconciled?: boolean };
+export const clearedStateViolation = (event: ClearedState): string | null => {
+  if (event.reconciled === true && event.status === 'WORKING') return 'A WORKING financial event cannot be reconciled';
+  if (event.reconciled === true && event.cleared !== true) return 'A reconciled financial event must be cleared';
+  if (event.cleared === true && event.status === 'WORKING') return 'A WORKING financial event cannot be cleared';
+  return null;
+};
 
 export const orderAccounts = <T extends { id: string; createdAt?: string }>(accounts: readonly T[]) => [...accounts].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id));
 export const oldestAccount = <T extends { id: string; createdAt?: string }>(accounts: readonly T[]) => orderAccounts(accounts)[0] ?? null;
@@ -32,13 +39,18 @@ export const calculateAccountBalances = <T extends AccountState>(accounts: reado
   const ordered = orderAccounts(accounts);
   const fallback = oldestAccount(ordered)?.id;
   return ordered.map(account => {
-    const balance = events.reduce((total, event) => {
+    const balances = events.reduce((total, event) => {
       if ((event.accountId ?? fallback) !== account.id) return total;
-      integer(event.amountMinor, 'event.amountMinor', 0);
-      return total + (event.kind === 'INCOME' || event.kind === 'TRANSFER_IN' ? event.amountMinor : -event.amountMinor);
-    }, account.openingBalanceMinor);
-    integer(balance, 'account balance');
-    return { ...account, balanceMinor: balance };
+      integer(event.amountMinor, 'event.amountMinor', event.kind === 'RECONCILIATION_ADJUSTMENT' ? undefined : 0);
+      const effect = event.kind === 'RECONCILIATION_ADJUSTMENT' ? event.amountMinor : event.kind === 'INCOME' || event.kind === 'TRANSFER_IN' ? event.amountMinor : -event.amountMinor;
+      return {
+        balanceMinor: total.balanceMinor + effect,
+        clearedBalanceMinor: total.clearedBalanceMinor + (event.cleared ? effect : 0),
+      };
+    }, { balanceMinor: account.openingBalanceMinor, clearedBalanceMinor: account.openingBalanceMinor });
+    integer(balances.balanceMinor, 'account balance');
+    integer(balances.clearedBalanceMinor, 'cleared account balance');
+    return { ...account, ...balances };
   });
 };
 
@@ -114,7 +126,7 @@ export const monthForDate = (value: string | Date, timezone = 'UTC') => {
 };
 
 const supported = new Set(['income', 'release', 'spending', 'assignment', 'unassignment', 'move']);
-const deferred = new Set(['split', 'transfer', 'card', 'reconciliation', 'target', 'scheduled', 'future-income', 'refund', 'reimbursement', 'return', 'edit', 'delete', 'cleared', 'pending', 'uncleared']);
+const deferred = new Set(['split', 'transfer', 'card', 'target', 'scheduled', 'future-income', 'refund', 'reimbursement', 'return', 'edit', 'delete', 'pending']);
 export const assertSupportedCommand = (command: string) => {
   const normalized = command.trim().toLowerCase();
   if (!supported.has(normalized) || deferred.has(normalized)) throw new Error(`Unsupported financial command: ${command}`);

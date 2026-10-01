@@ -1,0 +1,70 @@
+import test, { after } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { BudgetApp } from '../src/app.ts';
+import { FinancialStore } from '../src/persistence/financial-store.ts';
+import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
+
+const enabled = Boolean(process.env.DATABASE_URL);
+const prisma = enabled ? new (await import('@prisma/client')).PrismaClient() : null;
+after(async () => { await prisma?.$disconnect(); });
+const options = (idempotencyKey: string, expectedVersion: number) => ({ idempotencyKey, expectedVersion });
+const cleanup = async (email: string) => {
+  const user = await prisma!.user.findUnique({ where: { email }, include: { budget: true } });
+  if (user?.budget) {
+    await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.reconciliation.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.transfer.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
+    const accounts = await prisma!.account.findMany({ where: { budgetId: user.budget.id }, select: { id: true } });
+    await prisma!.openingBalance.deleteMany({ where: { accountId: { in: accounts.map(account => account.id) } } });
+    await prisma!.account.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.budget.delete({ where: { id: user.budget.id } });
+  }
+  if (user) await prisma!.user.delete({ where: { id: user.id } });
+};
+
+test('FinancialStore persists audit identity and rebuilds locked history and one adjustment', { skip: !enabled }, async t => {
+  let now = Date.parse('2026-09-01T00:00:00.000Z');
+  const email = `reconciliation-rebuild-${randomUUID()}@example.test`;
+  t.after(() => cleanup(email));
+  const financial = new FinancialStore(prisma!); const app = new BudgetApp(() => now++, new PrismaBudgetStore(prisma!), financial);
+  await app.register(email, 'correct horse'); const token = (await app.signIn(email, 'correct horse')).data.sessionToken;
+  const budget = (await app.createBudget(token)).data; const setup = (await app.saveSetup(token, budget.id, { openingBalanceMinor: 1000, categories: ['Food'] })).data;
+  const actorId = (await app.authenticate(token)).id;
+  const version = (await financial.load(actorId, budget.id)).version;
+  const item = (await app.recordIncome(token, budget.id, { amountMinor: 100, date: '2026-09-02' }, undefined, options('rebuild-income', version))).data;
+  await app.setTransactionCleared(token, budget.id, item.id, { cleared: true }, undefined, options('rebuild-clear', (await financial.load(actorId, budget.id)).version));
+  const before = await financial.load(actorId, budget.id); const key = 'rebuild-reconcile';
+  const result = await (app as any).reconcileAccount(token, budget.id, setup.account!.id, { confirmedClearedBalanceMinor: 1125, confirmAdjustment: true, reason: 'September statement', date: '2026-10-12' }, undefined, options(key, before.version));
+  assert.equal(result.data.adjustmentMinor, 25); assert.equal(result.data.month, '2026-10'); assert.equal(result.data.lockedCount, 1);
+  const rebuilt = await new FinancialStore(prisma!).load(actorId, budget.id);
+  assert.equal(rebuilt.accounts?.find(account => account.id === setup.account!.id)?.balanceMinor, 1125);
+  assert.equal(rebuilt.accounts?.find(account => account.id === setup.account!.id)?.clearedBalanceMinor, 1125);
+  const locked = rebuilt.events.find(event => event.transactionId === item.id);
+  assert.equal(locked?.reconciled, true); assert.equal(locked?.cleared, true); assert.equal(locked?.reconciliationId, result.data.reconciliationId);
+  assert.ok(locked?.supersedesEventId, 'the locked replacement must link to the event it supersedes');
+  const supersededByLock = rebuilt.rawEvents?.find(event => event.id === locked?.supersedesEventId);
+  assert.equal(supersededByLock?.transactionId, item.id, 'the supersede link must resolve within the same transaction identity');
+  assert.equal(supersededByLock?.reconciled, false, 'the superseded event must stay unlocked and immutable');
+  const persistedAdjustment = rebuilt.rawEvents?.find(event => event.kind === 'RECONCILIATION_ADJUSTMENT' && event.reconciliationId === result.data.reconciliationId);
+  assert.equal(persistedAdjustment?.cleared, true);
+  assert.equal(persistedAdjustment?.reconciled, true);
+  assert.equal(rebuilt.rawEvents?.filter(event => event.kind === 'RECONCILIATION_ADJUSTMENT' && event.reconciliationId === result.data.reconciliationId).length, 1);
+  assert.equal(rebuilt.rawEvents?.filter(event => event.reconciled && event.reconciliationId === result.data.reconciliationId).length, 2);
+  const record = await prisma!.reconciliation.findUnique({ where: { id: result.data.reconciliationId } });
+  assert.deepEqual({ budgetId: record?.budgetId, accountId: record?.accountId, actorId: record?.actorId, observed: Number(record?.observedClearedBalanceMinor), confirmed: Number(record?.confirmedClearedBalanceMinor), adjustment: Number(record?.adjustmentMinor), reason: record?.reason, month: record?.month }, { budgetId: budget.id, accountId: setup.account!.id, actorId, observed: 1100, confirmed: 1125, adjustment: 25, reason: 'September statement', month: '2026-10' });
+  assert.ok(record?.createdAt instanceof Date);
+  const receipt = await prisma!.commandReceipt.findUnique({ where: { budgetId_idempotencyKey: { budgetId: budget.id, idempotencyKey: key } } });
+  assert.equal((receipt?.result as any).reconciliationId, result.data.reconciliationId);
+  const replay = await (app as any).reconcileAccount(token, budget.id, setup.account!.id, { confirmedClearedBalanceMinor: 1125, confirmAdjustment: true, reason: 'September statement', date: '2026-10-12' }, undefined, options(key, before.version));
+  assert.deepEqual(replay.data, result.data);
+  assert.equal(await prisma!.reconciliation.count({ where: { budgetId: budget.id } }), 1);
+  assert.equal(await prisma!.financialEvent.count({ where: { budgetId: budget.id, kind: 'RECONCILIATION_ADJUSTMENT' } }), 1);
+  assert.equal((await financial.load(actorId, budget.id)).rawEvents?.filter(event => event.reconciliationId === result.data.reconciliationId && event.reconciled).length, 2);
+  const negative = await (app as any).reconcileAccount(token, budget.id, setup.account!.id, { confirmedClearedBalanceMinor: 1100, confirmAdjustment: true, reason: 'Negative correction', date: '2026-11-02' }, undefined, options('rebuild-negative', (await financial.load(actorId, budget.id)).version));
+  assert.equal(negative.data.adjustmentMinor, -25);
+  assert.equal((await financial.load(actorId, budget.id)).accounts?.find(account => account.id === setup.account!.id)?.balanceMinor, 1100);
+  assert.equal(await prisma!.financialEvent.count({ where: { budgetId: budget.id, kind: 'RECONCILIATION_ADJUSTMENT' } }), 2);
+});

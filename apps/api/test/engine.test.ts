@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   applyAssignment,
   calculateAccountBalance,
+  calculateAccountBalances,
+  aggregateAccountBalance,
   calculateCategory,
   calculateRta,
   moveAssignment,
@@ -15,6 +17,46 @@ import {
 
 test('account balance uses exact minor-unit arithmetic', () => {
   assert.equal(calculateAccountBalance({ openingBalanceMinor: 1, incomeMinor: 2, spendingMinor: 1 }), 2);
+});
+
+test('cleared balances treat openings as cleared and include only cleared effective effects', () => {
+  const accounts = [{ id: 'cash', name: 'Cash', kind: 'CASH' as const, archived: false, openingBalanceMinor: 1000 }];
+  const events = [
+    { accountId: 'cash', kind: 'INCOME' as const, amountMinor: 100, cleared: true },
+    { accountId: 'cash', kind: 'SPENDING' as const, amountMinor: 25, cleared: false },
+    { accountId: 'cash', kind: 'TRANSFER_OUT' as const, amountMinor: 5, cleared: true },
+    { accountId: 'cash', kind: 'TRANSFER_IN' as const, amountMinor: 10, cleared: false },
+  ];
+  const [projected] = calculateAccountBalances(accounts, events);
+  assert.equal(projected.clearedBalanceMinor, 1095);
+  assert.equal(projected.balanceMinor, 1080);
+  assert.equal(aggregateAccountBalance(accounts, events), 1080);
+});
+
+test('an account with no cleared history reports its opening balance as cleared', () => {
+  const [projected] = calculateAccountBalances(
+    [{ id: 'cash', name: 'Cash', kind: 'CASH', archived: false, openingBalanceMinor: -250 }],
+    [{ accountId: 'cash', kind: 'INCOME', amountMinor: 100, cleared: false }],
+  );
+  assert.equal(projected.clearedBalanceMinor, -250);
+  assert.equal(projected.balanceMinor, -150);
+});
+
+test('paired transfer effects change cleared balances according to each effect state', () => {
+  const accounts = [
+    { id: 'source', name: 'Source', kind: 'CASH' as const, archived: false, openingBalanceMinor: 500 },
+    { id: 'destination', name: 'Destination', kind: 'CHECKING' as const, archived: false, openingBalanceMinor: 100 },
+  ];
+  const events = [
+    { accountId: 'source', kind: 'TRANSFER_OUT' as const, amountMinor: 125, cleared: true },
+    { accountId: 'destination', kind: 'TRANSFER_IN' as const, amountMinor: 125, cleared: false },
+  ];
+  const projected = new Map(calculateAccountBalances(accounts, events).map(item => [item.id, item]));
+  const source = projected.get('source')!;
+  const destination = projected.get('destination')!;
+  assert.deepEqual([source.clearedBalanceMinor, destination.clearedBalanceMinor], [375, 100]);
+  assert.deepEqual([source.balanceMinor, destination.balanceMinor], [375, 225]);
+  assert.equal(aggregateAccountBalance(accounts, events), 600);
 });
 
 test('RTA keeps unreleased income out and does not subtract spending twice', () => {

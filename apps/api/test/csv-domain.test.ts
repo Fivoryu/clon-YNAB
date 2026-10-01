@@ -51,7 +51,8 @@ test('effective export is deterministic, excludes superseded/deleted effects and
     { id: 'new', transactionId: 't1', supersedesEventId: 'old', kind: 'INCOME', amountMinor: 11, businessDate: '2026-09-15', accountId: A, payee: 'A' },
     { id: 'move', kind: 'MOVE', amountMinor: 2, month: '2026-09' },
     { id: 's1', transactionId: 's1', kind: 'SPENDING', amountMinor: 4, businessDate: '2026-09-14', accountId: A, categoryId: C },
-    { id: 'out', kind: 'TRANSFER_OUT', amountMinor: 3, businessDate: '2026-09-13', accountId: A },
+    { id: 'out', kind: 'TRANSFER_OUT', transferId: 'tr', amountMinor: 3, businessDate: '2026-09-13', accountId: A },
+    { id: 'in', kind: 'TRANSFER_IN', transferId: 'tr', amountMinor: 3, businessDate: '2026-09-13', accountId: B },
   ], [{ id: 'tr', sourceAccountId: A, destinationAccountId: B, amountMinor: 3, businessDate: '2026-09-13', payee: null, memo: 'x' }]);
   assert.deepEqual(rows.map(row => row.type), ['TRANSFER', 'SPENDING', 'INCOME']);
   assert.equal(rows.filter(row => row.type === 'TRANSFER').length, 1);

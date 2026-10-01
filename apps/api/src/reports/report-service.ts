@@ -1,4 +1,5 @@
 import { calculateAccountBalances, calculateCategory, calculateRta, positiveRollover, type AccountState } from '../planning/engine.ts';
+import { isFinancialEventCleared } from '../persistence/financial-store.ts';
 import type { FinancialEvent, FinancialState } from '../persistence/financial-store.ts';
 import { foldEffectiveHistory } from '../planning/transaction-history.ts';
 import { projectTargetState } from '../planning/targets.ts';
@@ -6,7 +7,7 @@ import { projectTargetState } from '../planning/targets.ts';
 export type FinancialSummary = {
   month: string;
   accountBalanceMinor: number;
-  accounts: ReturnType<typeof calculateAccountBalances>;
+  accounts: Omit<ReturnType<typeof calculateAccountBalances>[number], 'clearedBalanceMinor'>[];
   rta: ReturnType<typeof calculateRta>;
   categories: (FinancialState['categories'][number] & ReturnType<typeof calculateCategory> & { target?: ReturnType<typeof projectTargetState> })[];
   version: number;
@@ -27,7 +28,7 @@ export class ReportService {
       return { ...category, ...values, ...(target ? { target: projectTargetState(target, values, requestedMonth) } : {}) };
     });
     const sourceAccounts: AccountState[] = state.accounts ?? (state.account ? [{ ...state.account, kind: 'CASH', archived: state.account.archived ?? false }] : []);
-    const accounts = calculateAccountBalances(sourceAccounts, events.filter(event => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'].includes(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN', amountMinor: event.amountMinor })));
+    const accounts = calculateAccountBalances(sourceAccounts, events.filter(event => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'].includes(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'RECONCILIATION_ADJUSTMENT', amountMinor: event.amountMinor, cleared: isFinancialEventCleared(event) }))).map(({ clearedBalanceMinor: _clearedBalanceMinor, ...account }) => account);
     const openingBalanceMinor = sourceAccounts.reduce((sum, account) => sum + account.openingBalanceMinor, 0);
     return {
       month: requestedMonth,

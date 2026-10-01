@@ -26,7 +26,7 @@ export type Notice = { kind: 'success' | 'error' | 'info'; text: string } | null
 export type HistoryFilters = { month?: string; account?: string; kind?: HistoryKind; category?: string; from?: string; to?: string; q?: string };
 
 class RequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly details?: unknown) {
     super(message);
   }
 }
@@ -36,8 +36,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 async function apiCall<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { credentials: 'include', ...options });
-  const result = await response.json() as { data?: T; error?: { message?: string } };
-  if (!response.ok) throw new RequestError(result.error?.message || 'No se pudo completar la solicitud.', response.status);
+  const result = await response.json() as { data?: T; error?: { message?: string; details?: unknown } };
+  if (!response.ok) throw new RequestError(result.error?.message || 'No se pudo completar la solicitud.', response.status, result.error?.details);
   return result.data as T;
 }
 
@@ -395,6 +395,35 @@ export function useBudgetApp() {
 
   const editTransaction = (item: HistoryItem, input: { amountMinor: number; date: string; categoryId?: string; payee?: string | null; memo?: string | null }) => financialCommand<HistoryMutation>(`/api/v1/budgets/${budget!.id}/transactions/${item.transactionId}`, input, 'Transacción actualizada.', 'PATCH');
   const deleteTransaction = (item: HistoryItem, reason?: string) => financialCommand<HistoryMutation>(`/api/v1/budgets/${budget!.id}/transactions/${item.transactionId}`, { confirmed: true, ...(reason ? { reason } : {}) }, 'Transacción eliminada.', 'DELETE');
+  const setTransactionCleared = async (item: HistoryItem, cleared: boolean, accountId: string) => {
+    const result = await financialCommand<HistoryMutation>(`/api/v1/budgets/${budget!.id}/transactions/${item.transactionId}/cleared`, { cleared }, cleared ? 'Movimiento marcado.' : 'Marca retirada.', 'PATCH');
+    if (result) await readAccountHistory(accountId);
+    return result;
+  };
+  const reconcileAccount = async (accountId: string, input: { confirmedClearedBalanceMinor: number; confirmAdjustment: boolean; reason?: string }) => {
+    if (!budget) return null;
+    setBusy(true); setNotice(null);
+    try {
+      const result = await apiCall<{ version: number }>(`/api/v1/budgets/${budget.id}/accounts/${accountId}/reconciliation`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), 'If-Match': `W/"${budget.version}"` },
+        body: JSON.stringify(input),
+      });
+      setBudget(current => current ? { ...current, version: result.version } : current);
+      setNotice({ kind: 'success', text: 'Conciliación completada.' });
+      await sync({ ...budget, version: result.version }, month, historyFilters);
+      await readAccountHistory(accountId);
+      return { kind: 'completed' as const };
+    } catch (error) {
+      const difference = error instanceof RequestError && error.details && typeof error.details === 'object'
+        ? (error.details as { differenceMinor?: unknown }).differenceMinor : undefined;
+      if (!input.confirmAdjustment && error instanceof RequestError && error.status === 409 && (typeof difference === 'number' || typeof difference === 'string')) {
+        return { kind: 'mismatch' as const, differenceMinor: difference };
+      }
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo conciliar la cuenta.' });
+      return null;
+    } finally { setBusy(false); }
+  };
 
   const exportCsv = async () => {
     if (!budget) return;
@@ -434,7 +463,7 @@ export function useBudgetApp() {
     createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory, changeCategoryTarget,
     applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
     readMonthlyReport, readReportRange, reportRange,
-    editTransaction, deleteTransaction, exportCsv, importCsv,
+    editTransaction, deleteTransaction, setTransactionCleared, reconcileAccount, exportCsv, importCsv,
   };
 }
 

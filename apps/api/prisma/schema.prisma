@@ -29,6 +29,7 @@ enum FinancialEventKind {
   TRANSFER_OUT
   TRANSFER_IN
   TRANSACTION_DELETE
+  RECONCILIATION_ADJUSTMENT
 }
 
 enum TransactionStatus {
@@ -98,6 +99,7 @@ model User {
   sessions     Session[]
   budget       Budget?
   deletionAudits TransactionDeletionAudit[]
+  reconciliations Reconciliation[]
   simulationAudits SimulationAuditEntry[]
 }
 
@@ -125,6 +127,7 @@ model Budget {
   categoryTargets CategoryTarget[]
   months     BudgetMonth[]
   events     FinancialEvent[]
+  reconciliations Reconciliation[]
   transfers  Transfer[]
   commands   CommandReceipt[]
   deletionAudits TransactionDeletionAudit[]
@@ -151,6 +154,7 @@ model Account {
   budget          Budget             @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   openingBalances OpeningBalance[]
   events          FinancialEvent[]   @relation("AccountEvents")
+  reconciliations Reconciliation[]
   sourceTransfers Transfer[]         @relation("TransferSource")
   destinationTransfers Transfer[]    @relation("TransferDestination")
   @@unique([budgetId, id])
@@ -215,8 +219,10 @@ model FinancialEvent {
   transactionId     String?            @db.Uuid
   transferId        String?            @db.Uuid
   supersedesEventId String?            @db.Uuid
+  reconciliationId  String?            @db.Uuid
   status            TransactionStatus?
   reconciled        Boolean            @default(false)
+  cleared           Boolean            @default(false)
   kind              FinancialEventKind
   amountMinor       BigInt
   businessDate      DateTime?          @db.Date
@@ -232,6 +238,7 @@ model FinancialEvent {
   relatedEvent      FinancialEvent?    @relation("ReleaseOf", fields: [budgetId, relatedEventId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   release           FinancialEvent?    @relation("ReleaseOf")
   transfer          Transfer?          @relation(fields: [budgetId, transferId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  reconciliation    Reconciliation?    @relation("ReconciliationEvents", fields: [budgetId, reconciliationId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
   @@unique([budgetId, id])
   @@unique([budgetId, relatedEventId])
   @@index([budgetId, month, kind])
@@ -240,10 +247,30 @@ model FinancialEvent {
   @@index([budgetId, accountId, businessDate])
   @@index([budgetId, categoryId, businessDate])
   @@index([budgetId, transferId])
+  @@index([budgetId, reconciliationId])
   @@index([supersedesEventId])
-  @@unique([budgetId, transferId, kind])
+  @@index([budgetId, transferId, kind])
   @@index([accountId, createdAt])
   @@index([categoryId, month])
+}
+
+model Reconciliation {
+  id                              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  budgetId                        String           @db.Uuid
+  accountId                       String           @db.Uuid
+  actorId                         String           @db.Uuid
+  confirmedClearedBalanceMinor    BigInt
+  observedClearedBalanceMinor     BigInt
+  adjustmentMinor                 BigInt
+  reason                          String?
+  month                           String           @db.VarChar(7)
+  createdAt                       DateTime         @default(now()) @db.Timestamptz(6)
+  budget                          Budget           @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  account                         Account          @relation(fields: [budgetId, accountId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  actor                           User             @relation(fields: [actorId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  events                          FinancialEvent[] @relation("ReconciliationEvents")
+  @@unique([budgetId, id])
+  @@index([budgetId, accountId, createdAt])
 }
 
 model Transfer {

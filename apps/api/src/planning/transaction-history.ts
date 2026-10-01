@@ -6,14 +6,44 @@ export type TransactionStatus = 'POSTED' | 'WORKING';
 export type TransactionMetadata = { payee: string | null; memo: string | null };
 export type MetadataPatch = { payee?: string | null; memo?: string | null };
 export type TransactionEvent = {
-  id: string; transactionId?: string; kind: string; accountId?: string; amountMinor: number;
+  id: string; transactionId?: string; transferId?: string; kind: string; accountId?: string; amountMinor: number;
   businessDate?: string; month?: string; categoryId?: string; status?: TransactionStatus;
-  reconciled?: boolean; supersedesEventId?: string; relatedEventId?: string; budgetId?: string;
+  cleared?: boolean; reconciled?: boolean; supersedesEventId?: string; relatedEventId?: string; budgetId?: string;
   payee?: string | null; memo?: string | null;
 };
+export type TransactionClearedState = 'UNCLEARED' | 'CLEARED' | 'RECONCILED';
+export class TransferPairingError extends Error {
+  constructor(message: string) { super(message); this.name = 'TransferPairingError'; }
+}
 const transactionKinds = new Set(['INCOME', 'SPENDING']);
 const isTransaction = (event: TransactionEvent) => transactionKinds.has(event.kind);
-const identity = (event: TransactionEvent) => event.transactionId ?? event.id;
+export const isTransferEffect = (event: TransactionEvent) => event.kind === 'TRANSFER_OUT' || event.kind === 'TRANSFER_IN';
+export const isHistoryEffect = (event: TransactionEvent) => isTransaction(event) || isTransferEffect(event);
+const identity = (event: TransactionEvent) => isTransferEffect(event)
+  ? `transfer:${event.transferId ?? event.id}:${event.kind}`
+  : event.transactionId ?? event.id;
+const dateIdentity = (value: unknown) => value instanceof Date ? value.toISOString().slice(0, 10) : value;
+export const projectClearedState = (event: Pick<TransactionEvent, 'cleared' | 'reconciled'>): TransactionClearedState =>
+  event.reconciled === true ? 'RECONCILED' : event.cleared === true ? 'CLEARED' : 'UNCLEARED';
+export const assertTransferPairing = <T extends TransactionEvent>(events: readonly T[], transferIds: readonly string[] = []) => {
+  const effectsByTransfer = new Map<string, T[]>();
+  for (const event of events) {
+    if (!isTransferEffect(event)) continue;
+    if (!event.transferId) throw new TransferPairingError('Malformed transfer pairing: transfer effect is missing transferId');
+    const effects = effectsByTransfer.get(event.transferId) ?? [];
+    effects.push(event);
+    effectsByTransfer.set(event.transferId, effects);
+  }
+  for (const transferId of new Set([...transferIds, ...effectsByTransfer.keys()])) {
+    const effects = effectsByTransfer.get(transferId) ?? [];
+    const outgoing = effects.filter(event => event.kind === 'TRANSFER_OUT');
+    const incoming = effects.filter(event => event.kind === 'TRANSFER_IN');
+    if (outgoing.length !== 1 || incoming.length !== 1) throw new TransferPairingError(`Malformed transfer pairing for transfer ${transferId}`);
+    if (projectClearedState(outgoing[0]) !== projectClearedState(incoming[0])) {
+      throw new TransferPairingError('Malformed transfer pairing: effects disagree on cleared state');
+    }
+  }
+};
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const trimUnicodeWhitespace = (value: string) => value.replace(/^\p{White_Space}+/u, '').replace(/\p{White_Space}+$/u, '');
 const normalizeMetadataValue = (value: unknown, name: 'payee' | 'memo') => {
@@ -54,15 +84,23 @@ export const foldEffectiveHistory = <T extends TransactionEvent>(events: T[]): T
       current.delete(identity(event));
       continue;
     }
-    if (!isTransaction(event)) continue;
+    if (!isHistoryEffect(event)) continue;
     const key = identity(event);
     const previous = current.get(key);
     if (previous) {
-      if (event.supersedesEventId !== previous.id || event.kind !== previous.kind || event.accountId !== previous.accountId) throw new Error('Malformed immutable transaction chain');
+      const invalidTransferReplacement = isTransferEffect(event) && (
+        event.transferId !== previous.transferId || event.amountMinor !== previous.amountMinor ||
+        dateIdentity(event.businessDate) !== dateIdentity(previous.businessDate) || event.month !== previous.month
+      );
+      if (event.supersedesEventId !== previous.id || event.kind !== previous.kind || event.accountId !== previous.accountId || invalidTransferReplacement) {
+        throw new Error(isTransferEffect(event) ? 'Malformed immutable transfer chain' : 'Malformed immutable transaction chain');
+      }
     } else if (event.supersedesEventId) throw new Error('Malformed transaction chain');
     current.set(key, event);
   }
-  return events.filter(event => isTransaction(event) ? current.get(identity(event))?.id === event.id : event.kind !== 'TRANSACTION_DELETE') as T[];
+  const effective = events.filter(event => isHistoryEffect(event) ? current.get(identity(event))?.id === event.id : event.kind !== 'TRANSACTION_DELETE') as T[];
+  assertTransferPairing(effective.filter(isHistoryEffect));
+  return effective;
 };
 
 export const assertEligibleTransaction = (event: TransactionEvent, options: { supportedAccountId: string; released?: boolean }) => {
@@ -87,6 +125,14 @@ export const buildReplacement = (event: TransactionEvent, patch: { amountMinor?:
   const memo = hasOwn(metadata, 'memo') ? metadata.memo! : event.memo ?? null;
   return { ...event, id: randomUUID(), transactionId: identity(event), amountMinor: patch.amountMinor ?? event.amountMinor, businessDate: date.date, month: date.month, ...(categoryId ? { categoryId } : {}), payee, memo, supersedesEventId: event.id };
 };
+export const buildClearedReplacement = <T extends TransactionEvent>(event: T, cleared: boolean, createdAt: string): T => ({
+  ...event,
+  ...(isTransferEffect(event) ? {} : { transactionId: identity(event) }),
+  id: randomUUID(),
+  cleared,
+  createdAt,
+  supersedesEventId: event.id,
+}) as T;
 export const buildDeleteTombstone = (event: TransactionEvent, date = event.businessDate ?? `${event.month ?? '1970-01'}-01`): TransactionEvent => ({ id: randomUUID(), transactionId: identity(event), kind: 'TRANSACTION_DELETE', accountId: event.accountId, amountMinor: 0, businessDate: date, month: event.month, payee: null, memo: null, supersedesEventId: event.id });
 export const projectEffectiveHistory = <T extends TransactionEvent>(events: T[], appended: T) => foldEffectiveHistory([...events, appended]);
 

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { BudgetApp } from '../src/app.ts';
 import { FinancialStore, mapFinancialEventRow, mapTransferRow } from '../src/persistence/financial-store.ts';
 import { PrismaBudgetStore } from '../src/persistence/budget-store.ts';
+import { InMemoryBudgetStore } from '../src/persistence/in-memory-budget-store.ts';
 
 const prisma = process.env.DATABASE_URL ? new (await import('@prisma/client')).PrismaClient() : null;
 
@@ -31,17 +32,21 @@ test('financial state rows including targets share one repeatable-read snapshot'
   const calls: string[] = [];
   const tx = {
     budget: { findFirst: async () => { calls.push('budget'); return { id: 'budget-1', setupStep: 'COMPLETE', timezone: 'UTC', accounts: [{ id: 'account-1', name: 'Cash', kind: 'CASH', archived: false, createdAt: new Date('2026-01-01T00:00:00Z'), openingBalances: [{ amountMinor: 0n }] }], categories: [] }; } },
-    commandReceipt: { count: async () => { calls.push('version'); return 7; } },
+    commandReceipt: {
+      count: async () => { calls.push('version'); return 7; },
+      findMany: async () => { calls.push('receipts'); return []; },
+    },
     financialEvent: { findMany: async () => { calls.push('events'); return [snapshotEvent]; } },
     transfer: { findMany: async () => { calls.push('transfers'); return []; } },
     categoryTarget: { findMany: async () => { calls.push('targets'); return []; } },
+    reconciliation: { findMany: async () => { calls.push('reconciliations'); return []; } },
   };
   const client = { $transaction: async (work: (tx: any) => Promise<unknown>, options: any) => {
     assert.equal(options.isolationLevel, 'RepeatableRead');
     return work(tx);
   } };
   const state = await new FinancialStore(client as any).load('owner-1', 'budget-1');
-  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers', 'targets']);
+  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers', 'targets', 'reconciliations', 'receipts']);
   assert.equal(state.version, 7);
   assert.equal(state.events[0].transactionId, 'snapshot-event');
 });
@@ -56,15 +61,53 @@ test('persistence mapping preserves replacement and tombstone metadata rows for 
   assert.equal(tombstone.supersedesEventId, replacement.id);
 });
 const options = (idempotencyKey: string, expectedVersion?: number) => ({ idempotencyKey, expectedVersion });
+const createPrismaApp = () => {
+  let now = Date.parse('2026-09-01T00:00:00.000Z');
+  const budgetStore = new PrismaBudgetStore(prisma!);
+  const financialStore = new FinancialStore(prisma!);
+  return { app: new BudgetApp(() => now++, budgetStore, financialStore), budgetStore, financialStore };
+};
+const createMemoryApp = () => {
+  let now = Date.parse('2026-09-01T00:00:00.000Z');
+  const budgetStore = new InMemoryBudgetStore();
+  return { app: new BudgetApp(() => now++, budgetStore), budgetStore };
+};
+const createFixture = async (app: BudgetApp, email: string) => {
+  await app.register(email, 'correct horse');
+  const token = (await app.signIn(email, 'correct horse')).data.sessionToken;
+  const budget = (await app.createBudget(token)).data;
+  const setup = (await app.saveSetup(token, budget.id, { openingBalanceMinor: 1000, categories: ['Food', 'Housing'] })).data;
+  const owner = await app.authenticate(token);
+  return { token, budgetId: budget.id, ownerId: owner.id, accountId: setup.account!.id, categoryIds: setup.categories.map((category: any) => category.id) };
+};
+const seedHistory = async (app: BudgetApp, fixture: Awaited<ReturnType<typeof createFixture>>, prefix: string) => {
+  const income = (await app.recordIncome(fixture.token, fixture.budgetId, { amountMinor: 50, date: '2026-09-01' }, undefined, options(`${prefix}-income`))).data;
+  const spending = (await app.recordSpending(fixture.token, fixture.budgetId, { amountMinor: 100, categoryId: fixture.categoryIds[0], date: '2026-09-02' }, undefined, options(`${prefix}-spending`))).data;
+  return { income, spending };
+};
+const markPrismaEventCleared = (eventId: string) => prisma!.financialEvent.update({ where: { id: eventId }, data: { cleared: true } });
+const markMemoryEventCleared = (store: InMemoryBudgetStore, fixture: Awaited<ReturnType<typeof createFixture>>, eventId: string) => {
+  const state = store.loadBudget(fixture.ownerId, fixture.budgetId);
+  assert.ok(state);
+  store.saveBudget(fixture.ownerId, { ...state, events: state.events.map(event => event.id === eventId ? { ...event, cleared: true } : event) });
+};
+const readAccountBalances = async (app: BudgetApp, fixture: Awaited<ReturnType<typeof createFixture>>) => {
+  const budget = (await app.getBudget(fixture.token, fixture.budgetId)).data;
+  const account = budget.accounts.find((candidate: any) => candidate.id === fixture.accountId);
+  assert.ok(account);
+  return { working: account.balanceMinor, cleared: account.clearedBalanceMinor };
+};
 const cleanup = async (email: string) => {
   const user = await prisma!.user.findUnique({ where: { email }, include: { budget: true } });
   if (user?.budget) {
     await prisma.transactionDeletionAudit.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma!.commandReceipt.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma!.financialEvent.deleteMany({ where: { budgetId: user.budget.id } });
+    await prisma!.transfer.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma!.category.deleteMany({ where: { budgetId: user.budget.id } });
-    const account = await prisma!.account.findFirst({ where: { budgetId: user.budget.id } });
-    if (account) { await prisma!.openingBalance.deleteMany({ where: { accountId: account.id } }); await prisma!.account.delete({ where: { id: account.id } }); }
+    const accounts = await prisma!.account.findMany({ where: { budgetId: user.budget.id }, select: { id: true } });
+    await prisma!.openingBalance.deleteMany({ where: { accountId: { in: accounts.map(account => account.id) } } });
+    await prisma!.account.deleteMany({ where: { budgetId: user.budget.id } });
     await prisma!.budget.delete({ where: { id: user.budget.id } });
   }
   if (user) await prisma!.user.delete({ where: { id: user.id } });
@@ -104,6 +147,41 @@ test('PostgreSQL folds two replacements before deleting a transaction', { skip: 
     const audit = await prisma!.transactionDeletionAudit.findFirst({ where: { budgetId: budget.id, transactionId: original.id } });
     assert.equal(audit?.actorId, owner.id);
     assert.equal(audit?.transactionId, original.id);
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('PostgreSQL persists a replacement chain for both effects of a cleared transfer', { skip: !process.env.DATABASE_URL }, async () => {
+  const { app, financialStore } = createPrismaApp();
+  const email = `${randomUUID()}@example.test`;
+  try {
+    await app.register(email, 'correct horse');
+    const token = (await app.signIn(email, 'correct horse')).data.sessionToken;
+    const budget = (await app.createBudget(token)).data;
+    const ready = (await app.saveSetup(token, budget.id, { openingBalanceMinor: 1000, categories: ['Food'] })).data;
+    const destination = (await app.createAccount(token, budget.id, { name: 'Transfer destination', kind: 'checking' }, undefined, options('transfer-chain-account', 0))).data.account;
+    const transfer = (await app.recordTransfer(token, budget.id, { sourceAccountId: ready.account!.id, destinationAccountId: destination.id, amountMinor: 125, date: '2026-02-12' }, undefined, options('transfer-chain-seed', 1))).data;
+    const owner = await app.authenticate(token);
+    const before = await financialStore.load(owner.id, budget.id);
+    await financialStore.execute({
+      ownerId: owner.id, budgetId: budget.id, command: 'transfer-cleared-test', input: { transferId: transfer.transferId, cleared: true },
+      idempotencyKey: 'transfer-chain-clear', expectedVersion: before.version,
+      work: (state: any, events: any[], _version: number, append: (event: any) => void) => {
+        const pair = (state.rawEvents ?? events).filter((event: any) => event.transferId === transfer.transferId);
+        assert.deepEqual(pair.map((event: any) => event.kind).sort(), ['TRANSFER_IN', 'TRANSFER_OUT']);
+        for (const current of pair) {
+          const replacement = { ...current, id: randomUUID(), cleared: true, supersedesEventId: current.id, createdAt: new Date().toISOString() };
+          const index = events.findIndex((event: any) => event.id === current.id);
+          if (index < 0) events.push(replacement); else events.splice(index, 1, replacement);
+          append(replacement);
+        }
+        return { transferId: transfer.transferId };
+      },
+    });
+    const after = await financialStore.load(owner.id, budget.id);
+    assert.deepEqual(after.events.filter(event => event.transferId === transfer.transferId).map(event => event.kind).sort(), ['TRANSFER_IN', 'TRANSFER_OUT']);
+    assert.ok(after.events.filter(event => event.transferId === transfer.transferId).every(event => event.cleared));
   } finally {
     await cleanup(email);
   }
@@ -169,14 +247,20 @@ test('PostgreSQL metadata survives replacement rebuild, transfer restart, rollba
     await assert.rejects(() => store.execute({ ownerId: owner.id, budgetId, command: 'metadata-rollback', input: { payee: 'ShouldNotPersist' }, idempotencyKey: 'metadata-rollback', expectedVersion: 4, work: (state: any, events: any[]) => {
       const transferId = randomUUID();
       state.transfers.push({ id: transferId, sourceAccountId: ready.account!.id, destinationAccountId: destination.id, amountMinor: 1, businessDate: '2026-02-03', month: '2026-02', createdAt: new Date().toISOString(), payee: 'ShouldNotPersist', memo: 'Rollback' });
-      events.push({ id: randomUUID(), kind: 'TRANSFER_OUT', transferId, accountId: ready.account!.id, amountMinor: 1, businessDate: '2026-02-03', month: '2026-02' });
+      events.push(
+        { id: randomUUID(), kind: 'TRANSFER_OUT', transferId, accountId: ready.account!.id, amountMinor: 1, businessDate: '2026-02-03', month: '2026-02' },
+        { id: randomUUID(), kind: 'TRANSFER_IN', transferId, accountId: destination.id, amountMinor: 1, businessDate: '2026-02-03', month: '2026-02' },
+      );
       return {};
     }, deletionAudit: { actorId: 'not-a-uuid', transactionId: randomUUID() } }));
     assert.deepEqual({ events: await prisma!.financialEvent.count({ where: { budgetId } }), transfers: await prisma.transfer.count({ where: { budgetId } }), receipts: await prisma!.commandReceipt.count({ where: { budgetId } }) }, countsBeforeFailure);
     const retries = await Promise.all([1, 2].map(() => store.execute({ ownerId: owner.id, budgetId, command: 'metadata-concurrent', input: { payee: 'Retry', memo: 'Once' }, idempotencyKey: 'metadata-concurrent', expectedVersion: 4, work: (state: any, events: any[]) => {
       const transferId = randomUUID();
       state.transfers.push({ id: transferId, sourceAccountId: ready.account!.id, destinationAccountId: destination.id, amountMinor: 2, businessDate: '2026-02-04', month: '2026-02', createdAt: new Date().toISOString(), payee: 'Retry', memo: 'Once' });
-      events.push({ id: randomUUID(), kind: 'TRANSFER_OUT', transferId, accountId: ready.account!.id, amountMinor: 2, businessDate: '2026-02-04', month: '2026-02' });
+      events.push(
+        { id: randomUUID(), kind: 'TRANSFER_OUT', transferId, accountId: ready.account!.id, amountMinor: 2, businessDate: '2026-02-04', month: '2026-02' },
+        { id: randomUUID(), kind: 'TRANSFER_IN', transferId, accountId: destination.id, amountMinor: 2, businessDate: '2026-02-04', month: '2026-02' },
+      );
       return { transferId };
     } })));
     assert.equal(retries[0].result.transferId, retries[1].result.transferId);
@@ -241,6 +325,135 @@ test('two PostgreSQL clients serialize concurrent transaction edits and replay o
     }
     if (user) { await firstPrisma.session.deleteMany({ where: { userId: user.id } }); await firstPrisma.user.delete({ where: { id: user.id } }); }
     await Promise.all([firstPrisma.$disconnect(), secondPrisma.$disconnect()]);
+  }
+});
+
+test('PrismaBudgetStore projects an edited replacement once in working and cleared balances', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-edit-${randomUUID()}@example.test`;
+  const { app, financialStore } = createPrismaApp();
+  try {
+    const fixture = await createFixture(app, email);
+    const { spending } = await seedHistory(app, fixture, 'effective-edit');
+    await markPrismaEventCleared(spending.id);
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 950, cleared: 900 });
+
+    await app.editTransaction(fixture.token, fixture.budgetId, spending.id, { amountMinor: 150, date: '2026-09-03', categoryId: fixture.categoryIds[1] }, undefined, options('effective-edit-first', 2));
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 900, cleared: 850 });
+    const financialState = await financialStore.load(fixture.ownerId, fixture.budgetId);
+    const financialAccount = financialState.accounts!.find(account => account.id === fixture.accountId)!;
+    assert.deepEqual({ working: financialAccount.balanceMinor, cleared: financialAccount.clearedBalanceMinor }, { working: 900, cleared: 850 });
+
+    await app.editTransaction(fixture.token, fixture.budgetId, spending.id, { amountMinor: 200, date: '2026-09-04', categoryId: fixture.categoryIds[0] }, undefined, options('effective-edit-second', 3));
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 850, cleared: 800 });
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('PrismaBudgetStore removes a deleted transaction effect from both balances', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-delete-${randomUUID()}@example.test`;
+  const { app } = createPrismaApp();
+  try {
+    const fixture = await createFixture(app, email);
+    const { spending } = await seedHistory(app, fixture, 'effective-delete');
+    await markPrismaEventCleared(spending.id);
+    await app.deleteTransaction(fixture.token, fixture.budgetId, spending.id, { confirmed: true }, undefined, options('effective-delete-command', 2));
+
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 1050, cleared: 1000 });
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('durable event projections hide superseded rows and tombstones while retaining raw history', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-events-${randomUUID()}@example.test`;
+  const { app, budgetStore, financialStore } = createPrismaApp();
+  try {
+    const fixture = await createFixture(app, email);
+    const { spending } = await seedHistory(app, fixture, 'effective-events');
+    await app.editTransaction(fixture.token, fixture.budgetId, spending.id, { amountMinor: 150 }, undefined, options('effective-events-edit', 2));
+
+    const afterEdit = await financialStore.load(fixture.ownerId, fixture.budgetId);
+    const budgetAfterEdit = await budgetStore.loadBudget(fixture.ownerId, fixture.budgetId);
+    const replacement = afterEdit.events.find(event => event.transactionId === spending.id);
+    assert.ok(replacement);
+    assert.deepEqual(budgetAfterEdit!.events.filter(event => event.transactionId === spending.id).map(event => event.id), [replacement.id]);
+    assert.ok(afterEdit.rawEvents?.some(event => event.id === spending.id), 'raw persisted history remains available');
+
+    await app.deleteTransaction(fixture.token, fixture.budgetId, spending.id, { confirmed: true }, undefined, options('effective-events-delete', 3));
+    const afterDelete = await financialStore.load(fixture.ownerId, fixture.budgetId);
+    const budgetAfterDelete = await budgetStore.loadBudget(fixture.ownerId, fixture.budgetId);
+    assert.equal(afterDelete.events.some(event => event.transactionId === spending.id || event.kind === 'TRANSACTION_DELETE'), false);
+    assert.equal(budgetAfterDelete!.events.some(event => event.transactionId === spending.id || event.kind === 'TRANSACTION_DELETE'), false);
+    assert.ok(afterDelete.rawEvents?.some(event => event.kind === 'TRANSACTION_DELETE'), 'the raw tombstone remains available for rebuilds');
+    const rebuiltFinancial = await new FinancialStore(prisma!).load(fixture.ownerId, fixture.budgetId);
+    const rebuiltBudget = await new PrismaBudgetStore(prisma!).loadBudget(fixture.ownerId, fixture.budgetId);
+    assert.equal(rebuiltFinancial.events.some(event => event.transactionId === spending.id), false);
+    assert.equal(rebuiltBudget!.events.some(event => event.kind === 'TRANSACTION_DELETE'), false);
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('PrismaBudgetStore and InMemoryBudgetStore agree after editing and deleting history', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-parity-${randomUUID()}@example.test`;
+  const { app: prismaApp } = createPrismaApp();
+  const { app: memoryApp, budgetStore: memoryStore } = createMemoryApp();
+  try {
+    const prismaFixture = await createFixture(prismaApp, email);
+    const memoryFixture = await createFixture(memoryApp, `memory-${email}`);
+    const { spending: prismaSpending } = await seedHistory(prismaApp, prismaFixture, 'effective-parity');
+    const { spending: memorySpending } = await seedHistory(memoryApp, memoryFixture, 'effective-parity');
+    await markPrismaEventCleared(prismaSpending.id);
+    markMemoryEventCleared(memoryStore, memoryFixture, memorySpending.id);
+
+    await prismaApp.editTransaction(prismaFixture.token, prismaFixture.budgetId, prismaSpending.id, { amountMinor: 150, date: '2026-09-03', categoryId: prismaFixture.categoryIds[1] }, undefined, options('effective-parity-edit', 2));
+    await memoryApp.editTransaction(memoryFixture.token, memoryFixture.budgetId, memorySpending.id, { amountMinor: 150, date: '2026-09-03', categoryId: memoryFixture.categoryIds[1] }, undefined, options('effective-parity-edit', 2));
+    assert.deepEqual(await readAccountBalances(prismaApp, prismaFixture), await readAccountBalances(memoryApp, memoryFixture));
+    assert.deepEqual(await readAccountBalances(prismaApp, prismaFixture), { working: 900, cleared: 850 });
+
+    await prismaApp.deleteTransaction(prismaFixture.token, prismaFixture.budgetId, prismaSpending.id, { confirmed: true }, undefined, options('effective-parity-delete', 3));
+    await memoryApp.deleteTransaction(memoryFixture.token, memoryFixture.budgetId, memorySpending.id, { confirmed: true }, undefined, options('effective-parity-delete', 3));
+    assert.deepEqual(await readAccountBalances(prismaApp, prismaFixture), await readAccountBalances(memoryApp, memoryFixture));
+    assert.deepEqual(await readAccountBalances(prismaApp, prismaFixture), { working: 1050, cleared: 1000 });
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('PrismaBudgetStore preserves an unedited budget balance', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-unchanged-${randomUUID()}@example.test`;
+  const { app, financialStore } = createPrismaApp();
+  try {
+    const fixture = await createFixture(app, email);
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 1000, cleared: 1000 });
+    await app.recordIncome(fixture.token, fixture.budgetId, { amountMinor: 50, date: '2026-09-01' }, undefined, options('effective-unchanged-income'));
+    assert.deepEqual(await readAccountBalances(app, fixture), { working: 1050, cleared: 1000 });
+    const state = await financialStore.load(fixture.ownerId, fixture.budgetId);
+    assert.deepEqual({ working: state.accounts![0].balanceMinor, cleared: state.accounts![0].clearedBalanceMinor }, { working: 1050, cleared: 1000 });
+  } finally {
+    await cleanup(email);
+  }
+});
+
+test('effective-history projection preserves both balanced transfer effects', { skip: !process.env.DATABASE_URL }, async () => {
+  const email = `effective-transfer-${randomUUID()}@example.test`;
+  const { app, budgetStore, financialStore } = createPrismaApp();
+  try {
+    const fixture = await createFixture(app, email);
+    const destination = (await app.createAccount(fixture.token, fixture.budgetId, { name: 'Destination', kind: 'CHECKING', openingBalanceMinor: 250 }, undefined, options('effective-transfer-account', 0))).data.account;
+    const transfer = (await app.recordTransfer(fixture.token, fixture.budgetId, { sourceAccountId: fixture.accountId, destinationAccountId: destination.id, amountMinor: 125, date: '2026-09-02' }, undefined, options('effective-transfer-command', 1))).data;
+    const budget = (await app.getBudget(fixture.token, fixture.budgetId)).data;
+    const source = budget.accounts.find((account: any) => account.id === fixture.accountId);
+    const target = budget.accounts.find((account: any) => account.id === destination.id);
+    assert.deepEqual([source.balanceMinor, target.balanceMinor, budget.accountBalanceMinor], [875, 375, 1250]);
+
+    const financial = await financialStore.load(fixture.ownerId, fixture.budgetId);
+    const budgetState = await budgetStore.loadBudget(fixture.ownerId, fixture.budgetId);
+    assert.deepEqual(financial.events.filter(event => event.transferId === transfer.transferId).map(event => event.kind).sort(), ['TRANSFER_IN', 'TRANSFER_OUT']);
+    assert.deepEqual(budgetState!.events.filter(event => event.transferId === transfer.transferId).map(event => event.kind).sort(), ['TRANSFER_IN', 'TRANSFER_OUT']);
+  } finally {
+    await cleanup(email);
   }
 });
 

@@ -6,10 +6,10 @@ info:
     The bounded slice supports cash and checking accounts, account lifecycle,
     same-budget transfers, categories, category targets, realized income,
     explicit income release, categorized spending, assignments, unassignments,
-    moves, monthly summaries, dashboard values, transaction history, and manual
-    CSV import/export. Splits, cards, reconciliation, scheduled transactions,
-    future income, refunds, reimbursements, returns, and cleared/pending/uncleared
-    states remain unsupported and are not part of this contract.
+    moves, monthly summaries, dashboard values, transaction history including
+    cleared-state transitions, and manual CSV import/export. Splits, cards, manual
+    reconciliation, scheduled transactions, future income, refunds, reimbursements,
+    returns, and pending states remain unsupported and are not part of this contract.
     Bank-provider simulation is a fictional local simulation only: no network, credentials are not accepted, provider connectivity, no real money, and no financial effects are accepted; candidate application is deferred.
 servers:
   - url: /
@@ -105,6 +105,18 @@ paths:
       requestBody: { required: false, content: { application/json: { schema: { type: object, maxProperties: 0 } } } }
       responses:
         '200': { $ref: '#/components/responses/AccountSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/accounts/{accountId}/reconciliation:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    post:
+      summary: Reconcile an account against a confirmed external cleared balance
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReconciliationInput' } } } }
+      responses:
+        '201': { description: Reconciliation recorded, with any confirmed adjustment and reconciled lock, content: { application/json: { schema: { $ref: '#/components/schemas/ReconciliationEnvelope' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -257,6 +269,19 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/budgets/{budgetId}/transactions/{itemId}/cleared:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/ItemId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+    patch:
+      summary: Change an eligible income, spending, or transfer item's cleared state without changing its financial content
+      description: The itemId identifies an income or spending transaction or a transfer aggregate. A transfer transition atomically supersedes both paired effects and preserves the transfer amount, account sides, business date, and month. Reconciled items and attempts to clear a WORKING item return 409. The cleared balance changes by the signed effect on each account; working balances and budgeting values remain unchanged.
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionClearedInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/TransactionSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/transactions/{transactionId}:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/TransactionId' }]
     get:
@@ -520,6 +545,12 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: Income or spending transaction identity, or the aggregate identity of a transfer.
+      schema: { type: string }
     RunId:
       name: runId
       in: path
@@ -559,7 +590,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: Required for financial and category-target mutations; the same key and payload replay the stored result.
+      description: Required for financial, category-target, and cleared-state mutations; the same key and payload replay the stored result.
       schema: { type: string, minLength: 1 }
     SimulationIdempotencyKey:
       name: Idempotency-Key
@@ -583,7 +614,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Required expected budget version for account, transfer, and category-target commands. Weak or quoted integer ETags are accepted.
+      description: Required expected budget version for account, transfer, category-target, and cleared-state commands. Weak or quoted integer ETags are accepted.
       schema: { type: string, pattern: '^(?:[0-9]+|"[0-9]+"|W/"[0-9]+")$' }
   responses:
     UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
@@ -647,7 +678,7 @@ components:
     SimulationSuccessEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { oneOf: [{ $ref: '#/components/schemas/SimulationResult' }, { $ref: '#/components/schemas/SimulationProfile' }, { $ref: '#/components/schemas/SimulationProjection' }] } } }
     User: { type: object, required: [id, email], properties: { id: { type: string }, email: { type: string, format: email } } }
     Session: { type: object, required: [user, sessionToken], properties: { user: { $ref: '#/components/schemas/User' }, sessionToken: { type: string, description: Opaque session token returned for this first slice } } }
-    Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer } } }
+    Account: { type: object, required: [id, name, kind, archived, openingBalanceMinor, balanceMinor, clearedBalanceMinor], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean }, openingBalanceMinor: { type: integer }, balanceMinor: { type: integer }, clearedBalanceMinor: { type: integer } } }
     AccountInput: { type: object, required: [name, kind], additionalProperties: false, properties: { name: { type: string, minLength: 1 }, kind: { type: string, enum: [cash, checking] }, openingBalanceMinor: { type: integer } } }
     Category: { type: object, required: [id, name, archived], properties: { id: { type: string }, name: { type: string }, archived: { type: boolean } } }
     CategoryTargetInput:
@@ -686,9 +717,13 @@ components:
     AllocationInput: { type: object, required: [categoryId, amountMinor, month], properties: { categoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
     MoveInput: { type: object, required: [sourceCategoryId, destinationCategoryId, amountMinor, month], properties: { sourceCategoryId: { type: string }, destinationCategoryId: { type: string }, amountMinor: { $ref: '#/components/schemas/Money' }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } } }
     TransactionEditInput: { type: object, minProperties: 1, additionalProperties: false, properties: { amountMinor: { $ref: '#/components/schemas/Money' }, date: { type: string, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, categoryId: { type: string }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' } } }
+    TransactionClearedInput: { type: object, required: [cleared], additionalProperties: false, properties: { cleared: { type: boolean } } }
+    ReconciliationInput: { type: object, required: [confirmedClearedBalanceMinor], additionalProperties: false, properties: { confirmedClearedBalanceMinor: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991, description: Signed external cleared balance in safe integer minor units. }, confirmAdjustment: { type: boolean, default: false, description: Explicitly confirms applying the exact difference; a non-empty reason is then required. }, reason: { type: string, description: Required when a non-zero adjustment is confirmed. }, date: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: Optional reconciliation date; defaults to the timestamp in the budget timezone. } } }
+    ReconciliationResult: { type: object, required: [reconciliationId, accountId, observedClearedBalanceMinor, confirmedClearedBalanceMinor, adjustmentMinor, lockedCount, month, version], properties: { reconciliationId: { type: string, format: uuid }, accountId: { type: string, format: uuid }, observedClearedBalanceMinor: { type: integer }, confirmedClearedBalanceMinor: { type: integer }, adjustmentMinor: { type: integer, description: Confirmed account-local correction; it is not assignable and is omitted from summaries and reports. }, lockedCount: { type: integer, minimum: 0 }, month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, version: { type: integer, minimum: 0 } } }
+    ClearedState: { type: string, enum: [UNCLEARED, CLEARED, RECONCILED], description: Derived state: RECONCILED takes precedence over CLEARED; this value is not stored. }
     TransactionDeleteInput: { type: object, required: [confirmed], properties: { confirmed: { type: boolean, enum: [true] }, reason: { type: string } } }
-    TransactionHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, payee, memo, state], properties: { transactionId: { type: string }, kind: { type: string, enum: [INCOME, SPENDING] }, date: { type: string, format: date }, amountMinor: { type: integer }, accountId: { type: string }, category: { nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }] }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string }, state: { type: string, enum: [ELIGIBLE, PROTECTED] } } }
-    TransferHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, sourceAccount, destinationAccount, payee, memo, createdAt], properties: { transactionId: { type: string }, kind: { type: string, enum: [TRANSFER] }, date: { type: string, format: date }, amountMinor: { type: integer, minimum: 1 }, sourceAccount: { $ref: '#/components/schemas/AccountReference' }, destinationAccount: { $ref: '#/components/schemas/AccountReference' }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string, format: date-time } } }
+    TransactionHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, payee, memo, state, clearedState], properties: { transactionId: { type: string }, kind: { type: string, enum: [INCOME, SPENDING] }, date: { type: string, format: date }, amountMinor: { type: integer }, accountId: { type: string }, category: { nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }] }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string }, state: { type: string, enum: [ELIGIBLE, PROTECTED] }, clearedState: { $ref: '#/components/schemas/ClearedState' } } }
+    TransferHistoryItem: { type: object, required: [transactionId, kind, date, amountMinor, sourceAccount, destinationAccount, payee, memo, createdAt, clearedState], properties: { transactionId: { type: string }, kind: { type: string, enum: [TRANSFER] }, date: { type: string, format: date }, amountMinor: { type: integer, minimum: 1 }, sourceAccount: { $ref: '#/components/schemas/AccountReference' }, destinationAccount: { $ref: '#/components/schemas/AccountReference' }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, createdAt: { type: string, format: date-time }, clearedState: { $ref: '#/components/schemas/ClearedState' } } }
     AccountReference: { type: object, required: [id, name, kind, archived], properties: { id: { type: string }, name: { type: string }, kind: { type: string, enum: [CASH, CHECKING] }, archived: { type: boolean } } }
     TransactionListResult: { type: object, required: [items, version], properties: { items: { type: array, items: { oneOf: [{ $ref: '#/components/schemas/TransactionHistoryItem' }, { $ref: '#/components/schemas/TransferHistoryItem' }] } }, version: { type: integer } } }
     TransactionResult: { type: object, required: [item, version], properties: { item: { oneOf: [{ $ref: '#/components/schemas/TransactionHistoryItem' }, { $ref: '#/components/schemas/TransferHistoryItem' }] }, version: { type: integer } } }
@@ -708,6 +743,7 @@ components:
     AccountEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/AccountResult' } } }
     CategoryTargetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/CategoryTargetResult' } } }
     TransferEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransferResult' } } }
+    ReconciliationEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ReconciliationResult' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }
     TransactionListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionListResult' } } }
     TransactionEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransactionResult' } } }

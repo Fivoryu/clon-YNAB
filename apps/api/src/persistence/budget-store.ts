@@ -1,7 +1,8 @@
 import type { PrismaClient, Prisma } from '@prisma/client';
-import type { FinancialState } from './financial-store.ts';
+import { isFinancialEventCleared, mapFinancialEventRow, type FinancialState } from './financial-store.ts';
 import { withPostgresTransaction } from './transaction.ts';
 import { calculateAccountBalances, oldestAccount } from '../planning/engine.ts';
+import { foldEffectiveHistory } from '../planning/transaction-history.ts';
 
 export type StoredUser = { id: string; email: string; passwordHash: string; budgetId?: string };
 export type StoredSession = { userId: string; expiresAt: number; revoked: boolean };
@@ -41,9 +42,10 @@ export class PrismaBudgetStore implements BudgetStore {
   private async read(tx: any, ownerId: string, budgetId: string): Promise<BudgetState | null> {
     const row = await tx.budget.findFirst({ where: { id: budgetId, ownerId }, include: { accounts: { include: { openingBalances: { orderBy: { recordedAt: 'desc' }, take: 1 } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, categories: true } });
     if (!row) return null;
-    const events = await tx.financialEvent.findMany({ where: { budgetId }, orderBy: { createdAt: 'asc' } });
-    const accounts = calculateAccountBalances(row.accounts.map((account: any) => ({ id: account.id, name: account.name, kind: account.kind, archived: account.archived, createdAt: account.createdAt.toISOString(), openingBalanceMinor: Number(account.openingBalances[0]?.amountMinor ?? 0n) })), events.filter((event: any) => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'].includes(event.kind)).map((event: any) => ({ accountId: event.accountId, kind: event.kind, amountMinor: Number(event.amountMinor) })));
+    const rawEvents = await tx.financialEvent.findMany({ where: { budgetId }, orderBy: { createdAt: 'asc' } });
+    const events = foldEffectiveHistory(rawEvents);
+    const accounts = calculateAccountBalances(row.accounts.map((account: any) => ({ id: account.id, name: account.name, kind: account.kind, archived: account.archived, createdAt: account.createdAt.toISOString(), openingBalanceMinor: Number(account.openingBalances[0]?.amountMinor ?? 0n) })), events.filter((event: any) => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'].includes(event.kind)).map((event: any) => ({ accountId: event.accountId, kind: event.kind, amountMinor: Number(event.amountMinor), cleared: isFinancialEventCleared(event) })));
     const alias = oldestAccount(accounts);
-    return { id: row.id, setupStep: row.setupStep, timezone: row.timezone, version: await tx.commandReceipt.count({ where: { budgetId } }), accounts, account: alias ? { id: alias.id, name: alias.name, kind: alias.kind, archived: alias.archived, createdAt: alias.createdAt, openingBalanceMinor: alias.openingBalanceMinor } : null, categories: row.categories.map((category: any) => ({ id: category.id, name: category.name, archived: category.archived })), events: events.map((event: any) => ({ id: event.id, kind: event.kind, amountMinor: Number(event.amountMinor), ...(event.month ? { month: event.month } : {}), ...(event.categoryId ? { categoryId: event.categoryId } : {}), ...(event.sourceCategoryId ? { sourceCategoryId: event.sourceCategoryId } : {}), ...(event.destinationCategoryId ? { destinationCategoryId: event.destinationCategoryId } : {}), ...(event.relatedEventId ? { relatedEventId: event.relatedEventId } : {}), ...(event.transferId ? { transferId: event.transferId } : {}) })) };
+    return { id: row.id, setupStep: row.setupStep, timezone: row.timezone, version: await tx.commandReceipt.count({ where: { budgetId } }), accounts, account: alias ? { id: alias.id, name: alias.name, kind: alias.kind, archived: alias.archived, createdAt: alias.createdAt, openingBalanceMinor: alias.openingBalanceMinor } : null, categories: row.categories.map((category: any) => ({ id: category.id, name: category.name, archived: category.archived })), events: events.map(mapFinancialEventRow) };
   }
 }
