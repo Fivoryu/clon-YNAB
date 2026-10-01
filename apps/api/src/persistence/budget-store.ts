@@ -33,7 +33,7 @@ export class PrismaBudgetStore implements BudgetStore {
     for (const category of state.categories) await tx.category.upsert({ where: { id: category.id }, create: { id: category.id, budgetId: state.id, name: category.name, archived: category.archived }, update: { name: category.name, archived: category.archived } });
     const accounts = state.accounts?.length ? state.accounts : (state.account ? [state.account] : []);
     for (const account of accounts) {
-      const saved = await tx.account.upsert({ where: { id: account.id }, create: { id: account.id, budgetId: state.id, name: account.name, kind: account.kind ?? 'CASH', archived: account.archived ?? false, ...(account.createdAt ? { createdAt: new Date(account.createdAt) } : {}) }, update: { name: account.name, archived: account.archived ?? false } });
+      const saved = await tx.account.upsert({ where: { id: account.id }, create: { id: account.id, budgetId: state.id, name: account.name, kind: account.kind ?? 'CASH', archived: account.archived ?? false, ...(account.createdAt ? { createdAt: new Date(account.createdAt) } : {}) }, update: { name: account.name, kind: account.kind ?? 'CASH', archived: account.archived ?? false } });
       await tx.openingBalance.upsert({ where: { accountId: saved.id }, create: { accountId: saved.id, amountMinor: BigInt(account.openingBalanceMinor) }, update: { amountMinor: BigInt(account.openingBalanceMinor) } });
     }
     return (await this.read(tx, ownerId, state.id))!;

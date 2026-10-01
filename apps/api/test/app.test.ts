@@ -41,6 +41,35 @@ test('setup is resumable, idempotent by state, and completes deterministically',
   assert.equal(app.getBudget(token, budget.id).data.account?.openingBalanceMinor, 12500);
 });
 
+test('setup persists the chosen account kind instead of coercing every account to cash', () => {
+  const app = new BudgetApp();
+  app.register('owner@example.test', 'correct horse');
+  const token = app.signIn('owner@example.test', 'correct horse').data.sessionToken;
+  const budget = app.createBudget(token).data;
+
+  const checking = app.saveSetup(token, budget.id, { ...setup, accountName: 'Banco', accountType: 'checking' }).data;
+  assert.equal(checking.account?.kind, 'CHECKING');
+  assert.equal(checking.accounts.length, 1);
+  assert.equal(checking.accounts[0].kind, 'CHECKING');
+  assert.equal(app.getBudget(token, budget.id).data.accounts[0].kind, 'CHECKING');
+
+  // Re-submitting setup with another supported kind updates the account in place, without duplicating it.
+  const cash = app.saveSetup(token, budget.id, { ...setup, accountName: 'Banco', accountType: 'cash' }).data;
+  assert.equal(cash.accounts.length, 1);
+  assert.equal(cash.accounts[0].kind, 'CASH');
+  assert.equal(app.getBudget(token, budget.id).data.accounts[0].kind, 'CASH');
+
+  // Omitting the type keeps the persisted kind instead of resetting it to the default.
+  const resubmitted = app.saveSetup(token, budget.id, { ...setup, accountName: 'Banco', accountType: 'checking' }).data;
+  const withoutType = app.saveSetup(token, budget.id, { ...setup, accountName: 'Banco' }).data;
+  assert.equal(resubmitted.accounts[0].kind, 'CHECKING');
+  assert.equal(withoutType.accounts[0].kind, 'CHECKING');
+
+  // An unsupported kind is still rejected and leaves the persisted kind untouched.
+  assert.throws(() => app.saveSetup(token, budget.id, { ...setup, accountType: 'card' }), (e: ApiError) => e.code === 'VALIDATION_ERROR');
+  assert.equal(app.getBudget(token, budget.id).data.accounts[0].kind, 'CHECKING');
+});
+
 test('HTTP budget resume requires auth and resumes the authenticated budget', async (t) => {
   const server = createServer(new BudgetApp());
   await new Promise<void>((resolve, reject) => {

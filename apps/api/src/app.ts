@@ -262,7 +262,15 @@ export class BudgetApp {
       if (input.accountType && !['cash', 'checking'].includes(input.accountType)) throw new ApiError('VALIDATION_ERROR', 'Only cash or checking accounts are supported');
       if (input.openingBalanceMinor !== undefined && (!Number.isInteger(input.openingBalanceMinor) || !Number.isSafeInteger(input.openingBalanceMinor))) throw new ApiError('VALIDATION_ERROR', 'Opening balance must be integer minor units');
       if (input.categories) { const names = [...new Set(input.categories.map(name => name.trim()).filter(Boolean))]; budget.categories = names.map(name => budget.categories.find(category => category.name === name) ?? { id: randomUUID(), name, archived: false }); }
-      if (input.openingBalanceMinor !== undefined) budget.account = { id: budget.account?.id ?? randomUUID(), name: input.accountName?.trim() || budget.account?.name || 'Cash', openingBalanceMinor: input.openingBalanceMinor };
+      if (input.openingBalanceMinor !== undefined) {
+        const accountId = budget.account?.id ?? randomUUID();
+        // The supported kind is part of the canonical account projection, so the owner's choice must
+        // survive setup instead of being coerced to the CASH default on read and on write.
+        const kind = input.accountType ? (input.accountType.toUpperCase() as 'CASH' | 'CHECKING') : budget.account?.kind ?? 'CASH';
+        budget.account = { id: accountId, name: input.accountName?.trim() || budget.account?.name || 'Cash', openingBalanceMinor: input.openingBalanceMinor, kind };
+        const canonical = budget.accounts?.find(account => account.id === accountId);
+        if (canonical) canonical.kind = kind;
+      }
       budget.setupStep = budget.account ? (budget.categories.some(category => !category.archived) ? 'COMPLETE' : 'CATEGORIES') : 'ACCOUNT';
       try { return this.result(this.budgetStore.saveBudget((budget as any).ownerId, budget), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); }
     };
