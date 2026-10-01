@@ -3,6 +3,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 import { withPostgresTransaction } from './transaction.ts';
 import { assertTransferPairing, foldEffectiveHistory, isTransferEffect, TransferPairingError } from '../planning/transaction-history.ts';
 import { calculateAccountBalances, clearedStateViolation, isBalanceEvent, oldestAccount, type AccountState } from '../planning/engine.ts';
+import { validateScheduleDefinition } from '../planning/schedules.ts';
 
 export type FinancialEvent = {
   id: string;
@@ -40,6 +41,21 @@ export type TransferState = {
 export type TargetKind = 'MONTHLY_SET_ASIDE' | 'BALANCE_BY_DATE';
 export type TargetInput = { kind: TargetKind; amountMinor: number; targetMonth?: string };
 export type TargetState = TargetInput & { categoryId: string };
+export type ScheduleState = {
+  id: string;
+  budgetId: string;
+  accountId: string;
+  categoryId: string | null;
+  flow: 'INCOME' | 'SPENDING';
+  amountMinor: number;
+  payee: string | null;
+  memo: string | null;
+  dayOfMonth: number;
+  intervalMonths: number;
+  startDate: string;
+  createdAt: string;
+  updatedAt: string;
+};
 export type ReconciliationRecord = { id: string; accountId: string; actorId: string; observedClearedBalanceMinor: number; confirmedClearedBalanceMinor: number; adjustmentMinor: number; reason: string | null; month: string; createdAt: string; idempotencyKey?: string };
 export type FinancialState = {
   id: string;
@@ -50,6 +66,7 @@ export type FinancialState = {
   accounts?: AccountState[];
   categories: { id: string; name: string; archived: boolean }[];
   targets?: TargetState[];
+  schedules?: ScheduleState[];
   events: FinancialEvent[];
   transfers?: TransferState[];
   reconciliations?: ReconciliationRecord[];
@@ -59,6 +76,8 @@ type Work<T> = (state: FinancialState, events: FinancialEvent[], nextVersion: nu
 export type FinancialCommand<T> = {
   ownerId: string; budgetId: string; command: string; input: unknown; idempotencyKey: string; expectedVersion?: number; payloadDigest?: string; work: Work<T>; persistAccounts?: boolean;
   persistTarget?: { categoryId: string; target: TargetInput | null };
+  persistSchedule?: ScheduleState;
+  deleteScheduleId?: string;
   deletionAudit?: { actorId: string; transactionId: string; requestId?: string; reason?: string };
 };
 
@@ -143,6 +162,8 @@ export class FinancialStore {
       assertTransferPairingAtWrite(events, newEvents, (state.transfers ?? []).map(transfer => transfer.id));
       if (command.persistAccounts) await this.persistAccounts(tx, command.budgetId, state.accounts ?? []);
       if (command.persistTarget) await this.persistTarget(tx, command.budgetId, command.persistTarget.categoryId, command.persistTarget.target);
+      if (command.persistSchedule) await this.persistSchedule(tx, command.budgetId, command.persistSchedule);
+      if (command.deleteScheduleId) await this.deleteSchedule(tx, command.budgetId, command.deleteScheduleId);
       for (const record of state.reconciliations ?? []) {
         if (previousReconciliations.has(record.id)) continue;
         await tx.reconciliation.create({ data: { id: record.id, budgetId: command.budgetId, accountId: record.accountId, actorId: record.actorId, observedClearedBalanceMinor: BigInt(record.observedClearedBalanceMinor), confirmedClearedBalanceMinor: BigInt(record.confirmedClearedBalanceMinor), adjustmentMinor: BigInt(record.adjustmentMinor), reason: record.reason, month: record.month, createdAt: new Date(record.createdAt) } });
@@ -169,15 +190,22 @@ export class FinancialStore {
     }, { isolationLevel: 'RepeatableRead' });
   }
 
-  private async readState(tx: Pick<Prisma.TransactionClient, 'financialEvent' | 'commandReceipt' | 'transfer' | 'categoryTarget' | 'reconciliation'>, budget: any, version: number): Promise<FinancialState> {
+  private async readState(tx: Pick<Prisma.TransactionClient, 'financialEvent' | 'commandReceipt' | 'transfer' | 'categoryTarget' | 'scheduledTransaction' | 'reconciliation'>, budget: any, version: number): Promise<FinancialState> {
     const sourceEvents = await tx.financialEvent.findMany({ where: { budgetId: budget.id }, orderBy: { createdAt: 'asc' } });
     const transfers = await tx.transfer.findMany({ where: { budgetId: budget.id }, orderBy: [{ businessDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] });
     const targetRows = await tx.categoryTarget.findMany({ where: { budgetId: budget.id }, orderBy: { categoryId: 'asc' } });
+    const scheduleRows = await tx.scheduledTransaction.findMany({ where: { budgetId: budget.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     const reconciliationRows = await tx.reconciliation.findMany({ where: { budgetId: budget.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     const receipts = await tx.commandReceipt.findMany({ where: { budgetId: budget.id }, select: { idempotencyKey: true, result: true } });
     const reconciliationKeys = new Map(receipts.flatMap((receipt: any) => typeof receipt.result?.reconciliationId === 'string' ? [[receipt.result.reconciliationId, receipt.idempotencyKey]] : []));
     const reconciliations: ReconciliationRecord[] = reconciliationRows.map((record: any) => ({ id: record.id, accountId: record.accountId, actorId: record.actorId, observedClearedBalanceMinor: amount(record.observedClearedBalanceMinor), confirmedClearedBalanceMinor: amount(record.confirmedClearedBalanceMinor), adjustmentMinor: amount(record.adjustmentMinor), reason: record.reason, month: record.month, createdAt: timestamp(record.createdAt)!, ...(reconciliationKeys.has(record.id) ? { idempotencyKey: reconciliationKeys.get(record.id)! } : {}) }));
     const targets: TargetState[] = targetRows.map((target: any) => ({ categoryId: target.categoryId, kind: target.kind, amountMinor: amount(target.amountMinor), ...(target.targetMonth === null ? {} : { targetMonth: target.targetMonth }) }));
+    const schedules: ScheduleState[] = scheduleRows.map((schedule: any) => ({
+      id: schedule.id, budgetId: schedule.budgetId, accountId: schedule.accountId, categoryId: schedule.categoryId,
+      flow: schedule.flow, amountMinor: amount(schedule.amountMinor), payee: schedule.payee, memo: schedule.memo,
+      dayOfMonth: schedule.dayOfMonth, intervalMonths: schedule.intervalMonths, startDate: dateOnly(schedule.startDate)!,
+      createdAt: timestamp(schedule.createdAt)!, updatedAt: timestamp(schedule.updatedAt)!,
+    }));
     const rawEvents = sourceEvents.map(mapFinancialEventRow);
     const events = foldEffectiveHistory(rawEvents);
     const rowsAccounts = budget.accounts ?? (budget.account ? [budget.account] : []);
@@ -195,6 +223,7 @@ export class FinancialStore {
       account: alias ? { id: alias.id, name: alias.name, kind: alias.kind, archived: alias.archived, createdAt: alias.createdAt, openingBalanceMinor: alias.openingBalanceMinor } : null,
       categories: budget.categories.map((category: any) => ({ id: category.id, name: category.name, archived: category.archived })),
       targets,
+      schedules,
       events, rawEvents,
     };
   }
@@ -213,6 +242,23 @@ export class FinancialStore {
     }
     const data = { budgetId, categoryId, kind: target.kind, amountMinor: BigInt(target.amountMinor), targetMonth: target.targetMonth ?? null };
     await tx.categoryTarget.upsert({ where: { categoryId }, create: data, update: data });
+  }
+
+  private async persistSchedule(tx: any, budgetId: string, schedule: ScheduleState) {
+    if (!validateScheduleDefinition(schedule)) throw new PersistenceError('CONFLICT', 'Invalid schedule state');
+    if (schedule.budgetId !== budgetId) throw new PersistenceError('CONFLICT', 'Schedule belongs to a different budget');
+    const data = {
+      id: schedule.id, budgetId, accountId: schedule.accountId, categoryId: schedule.categoryId, flow: schedule.flow,
+      amountMinor: BigInt(schedule.amountMinor), payee: schedule.payee, memo: schedule.memo,
+      dayOfMonth: schedule.dayOfMonth, intervalMonths: schedule.intervalMonths,
+      startDate: new Date(`${schedule.startDate}T00:00:00.000Z`),
+      createdAt: new Date(schedule.createdAt), updatedAt: new Date(schedule.updatedAt),
+    };
+    await tx.scheduledTransaction.upsert({ where: { id: schedule.id }, create: data, update: data });
+  }
+
+  private async deleteSchedule(tx: any, budgetId: string, scheduleId: string) {
+    await tx.scheduledTransaction.deleteMany({ where: { id: scheduleId, budgetId } });
   }
 
   private async appendEvent(tx: Prisma.TransactionClient, budgetId: string, accountId: string | undefined, event: FinancialEvent) {

@@ -39,6 +39,7 @@ test('financial state rows including targets share one repeatable-read snapshot'
     financialEvent: { findMany: async () => { calls.push('events'); return [snapshotEvent]; } },
     transfer: { findMany: async () => { calls.push('transfers'); return []; } },
     categoryTarget: { findMany: async () => { calls.push('targets'); return []; } },
+    scheduledTransaction: { findMany: async () => { calls.push('schedules'); return []; } },
     reconciliation: { findMany: async () => { calls.push('reconciliations'); return []; } },
   };
   const client = { $transaction: async (work: (tx: any) => Promise<unknown>, options: any) => {
@@ -46,9 +47,24 @@ test('financial state rows including targets share one repeatable-read snapshot'
     return work(tx);
   } };
   const state = await new FinancialStore(client as any).load('owner-1', 'budget-1');
-  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers', 'targets', 'reconciliations', 'receipts']);
+  assert.deepEqual(calls, ['budget', 'version', 'events', 'transfers', 'targets', 'schedules', 'reconciliations', 'receipts']);
+  assert.deepEqual(state.schedules, []);
   assert.equal(state.version, 7);
   assert.equal(state.events[0].transactionId, 'snapshot-event');
+});
+
+test('FinancialStore.load throws when the transaction client lacks the scheduledTransaction delegate', async () => {
+  const tx = {
+    budget: { findFirst: async () => ({ id: 'budget-1', setupStep: 'COMPLETE', timezone: 'UTC', accounts: [], categories: [] }) },
+    commandReceipt: { count: async () => 0, findMany: async () => [] },
+    financialEvent: { findMany: async () => [] },
+    transfer: { findMany: async () => [] },
+    categoryTarget: { findMany: async () => [] },
+    reconciliation: { findMany: async () => [] },
+  };
+  const client = { $transaction: async (work: (tx: any) => Promise<unknown>) => work(tx) };
+
+  await assert.rejects(() => new FinancialStore(client as any).load('owner-1', 'budget-1'), TypeError);
 });
 
 test('persistence mapping preserves replacement and tombstone metadata rows for rebuild', () => {

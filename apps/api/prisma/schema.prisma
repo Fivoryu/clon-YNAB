@@ -42,6 +42,11 @@ enum CategoryTargetKind {
   BALANCE_BY_DATE
 }
 
+enum ScheduledFlow {
+  INCOME
+  SPENDING
+}
+
 enum SimulationRunState {
   DISCONNECTED
   CONNECTING
@@ -125,6 +130,7 @@ model Budget {
   accounts   Account[]
   categories Category[]
   categoryTargets CategoryTarget[]
+  scheduledTransactions ScheduledTransaction[]
   months     BudgetMonth[]
   events     FinancialEvent[]
   reconciliations Reconciliation[]
@@ -157,6 +163,7 @@ model Account {
   reconciliations Reconciliation[]
   sourceTransfers Transfer[]         @relation("TransferSource")
   destinationTransfers Transfer[]    @relation("TransferDestination")
+  scheduledTransactions ScheduledTransaction[]
   @@unique([budgetId, id])
   @@index([budgetId, createdAt, id])
 }
@@ -173,6 +180,7 @@ model Category {
   sourceEvents      FinancialEvent[] @relation("SourceCategoryEvents")
   destinationEvents FinancialEvent[] @relation("DestinationCategoryEvents")
   targets           CategoryTarget[]
+  scheduledTransactions ScheduledTransaction[]
       @@unique([budgetId, id])
   @@index([budgetId, archived])
 }
@@ -187,6 +195,27 @@ model CategoryTarget {
   updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
   budget      Budget            @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
   category    Category          @relation(fields: [budgetId, categoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+}
+
+model ScheduledTransaction {
+  id             String        @id @db.Uuid
+  budgetId       String        @db.Uuid
+  accountId      String        @db.Uuid
+  categoryId     String?       @db.Uuid
+  flow           ScheduledFlow
+  amountMinor    BigInt
+  payee          String?
+  memo           String?
+  dayOfMonth     Int
+  intervalMonths Int
+  startDate      DateTime      @db.Date
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  budget         Budget        @relation(fields: [budgetId], references: [id], onUpdate: NoAction, onDelete: Restrict)
+  account        Account       @relation(fields: [budgetId, accountId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  category       Category?     @relation(fields: [budgetId, categoryId], references: [budgetId, id], onUpdate: NoAction, onDelete: Restrict)
+  @@index([budgetId])
+  @@index([budgetId, accountId])
 }
 
 model OpeningBalance {
