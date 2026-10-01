@@ -144,15 +144,30 @@ test.describe('multi-month report surface', () => {
     const mobileNav = page.getByRole('navigation', { name: 'Navegación móvil' });
     const mobileLinks = await mobileNav.getByRole('link').all();
     expect(mobileLinks).toHaveLength(6);
-    for (const link of mobileLinks) await expect(link).toBeInViewport();
     const navRows = await mobileNav.locator('a').evaluateAll(links => new Set(links.map(link => Math.round(link.getBoundingClientRect().top))).size);
     expect(navRows).toBe(1);
+    // Compact labels keep their full text on a single line and never break inside a word.
+    for (const link of mobileLinks) {
+      const label = link.locator('small');
+      await expect(label).toHaveCSS('white-space', 'nowrap');
+      expect(await label.evaluate(el => el.scrollWidth - el.clientWidth), 'a label must not overflow its own box').toBeLessThanOrEqual(1);
+      expect(await label.evaluate(el => el.getClientRects().length), 'a label must not wrap onto a second line').toBe(1);
+    }
+    // The bar scrolls horizontally instead of shrinking the labels, so every section stays reachable.
+    expect(await mobileNav.evaluate(el => el.scrollWidth > el.clientWidth), 'the compact bar must be horizontally scrollable at 320px').toBe(true);
+    for (const link of mobileLinks) {
+      await link.scrollIntoViewIfNeeded();
+      await expect(link).toBeInViewport();
+    }
+    // Navigation restores the current section as the visible one without any manual scrolling.
+    await mobileNav.evaluate(el => { el.scrollLeft = 0; });
     const trendsLink = mobileNav.getByRole('link', { name: 'Meses lado a lado' });
     await expect(trendsLink).toBeVisible();
     await expect(trendsLink).toHaveAttribute('href', '/reports/trends');
     await trendsLink.focus();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/reports\/trends$/);
+    await expect(mobileNav.locator('a.active')).toBeInViewport();
     await expect(page.getByRole('heading', { level: 1, name: 'Reporte de meses lado a lado' })).toBeVisible();
 
     const start = page.getByLabel('Mes de inicio');

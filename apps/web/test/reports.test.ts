@@ -181,7 +181,13 @@ test('the report surface reflows to a single column and scrolls its tables on na
   assert.match(styles, /\.report-table-scroll \{/);
   assert.match(styles, /\.report-table-scroll \{[\s\S]*?overflow-x: auto/);
   assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.report-measure-list \{ grid-template-columns: 1fr; \}/);
-  assert.match(styles, /@media \(max-width: 980px\) \{[\s\S]*?\.mobile-nav \{[\s\S]*?repeat\(auto-fit, minmax\(/);
+  // The compact bar keeps the full labels and scrolls horizontally instead of shrinking them into a
+  // column narrow enough to break a word in half.
+  assert.match(styles, /@media \(max-width: 980px\) \{[\s\S]*?\.mobile-nav \{[\s\S]*?display: flex/);
+  assert.match(styles, /@media \(max-width: 980px\) \{[\s\S]*?\.mobile-nav \{[\s\S]*?overflow-x: auto/);
+  assert.match(styles, /\.mobile-nav small \{[^}]*white-space: nowrap/);
+  // Only the compact bar must stop breaking words; long report and history text still wraps anywhere.
+  assert.doesNotMatch(styles, /\.mobile-nav small \{[^}]*overflow-wrap/);
 });
 
 test('every approved section renders together for a monthly report, so nothing is silently omitted', () => {

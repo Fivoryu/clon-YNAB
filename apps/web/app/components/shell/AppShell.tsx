@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useBudget } from '../../providers/BudgetAppProvider';
 import { ToastRegion } from '../ui/ToastRegion';
 
@@ -19,8 +19,14 @@ export function AppShell({ title, subtitle, action, children }: { title: string;
   const pathname = usePathname();
   const router = useRouter();
   const { signOut, busy } = useBudget();
+  const mobileNav = useRef<HTMLElement | null>(null);
   const logout = async () => { await signOut(); router.replace('/login'); };
   const isActive = (href: string) => href === '/reports' ? pathname === href : pathname.startsWith(href);
+  useEffect(() => {
+    // The compact bar scrolls horizontally rather than shrinking its labels, so the current section
+    // must be brought into view instead of staying off-screen after a navigation.
+    mobileNav.current?.querySelector('a.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [pathname]);
   return (
     <div className="app-frame">
       <aside className="sidebar">
@@ -34,7 +40,7 @@ export function AppShell({ title, subtitle, action, children }: { title: string;
         <header className="page-header"><div><p className="eyebrow">Mi presupuesto</p><h1>{title}</h1>{subtitle && <p className="lead">{subtitle}</p>}</div>{action && <div className="header-action">{action}</div>}</header>
         <main className="page-content">{children}</main>
       </div>
-      <nav className="mobile-nav" aria-label="Navegación móvil">{nav.map(item => <Link key={item.href} href={item.href} className={isActive(item.href) ? 'active' : ''}><span>{item.icon}</span><small>{item.label}</small></Link>)}</nav>
+      <nav className="mobile-nav" aria-label="Navegación móvil" ref={mobileNav}>{nav.map(item => <Link key={item.href} href={item.href} className={isActive(item.href) ? 'active' : ''}><span>{item.icon}</span><small>{item.label}</small></Link>)}</nav>
       <ToastRegion />
     </div>
   );
