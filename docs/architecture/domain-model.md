@@ -8,7 +8,7 @@ Priority and delivery status are separate: **P0**, **P1**, and **P2** express im
 
 ## Bounded areas
 
-**Clone decision:** The bounded first vertical slice was one authenticated user's budget, one cash/checking-style account with an explicit opening balance, categories, realized income/spending, monthly allocation, RTA/Available, dashboard/month summary, and positive rollover. Its transaction boundary was one realized income command and one categorized spending command with positive input amounts and `POSTED`/`WORKING` status. Later phases have delivered multiple accounts and transfers, ordinary transaction edit/delete, cleared-state transitions, and manual reconciliation as separate account-history capabilities. Credit cards, loans, broader account types, splits, future income, refunds/reimbursements/returns, closed-month corrections, pending transaction status, and overspending remain deferred or open; scheduled and repeating transactions remain deferred.
+**Clone decision:** The bounded first vertical slice was one authenticated user's budget, one cash/checking-style account with an explicit opening balance, categories, realized income/spending, monthly allocation, RTA/Available, dashboard/month summary, and positive rollover. Its transaction boundary was one realized income command and one categorized spending command with positive input amounts and `POSTED`/`WORKING` status. Later phases have delivered multiple accounts and transfers, ordinary transaction edit/delete, cleared-state transitions, and manual reconciliation as separate account-history capabilities. Credit cards, loans, broader account types, splits, future income, refunds/reimbursements/returns, closed-month corrections, pending transaction status, and overspending remain deferred or open. Scheduled and repeating transactions were delivered as a later slice, with the generation policy recorded below.
 
 ### Identity and access
 
@@ -35,12 +35,16 @@ Priority and delivery status are separate: **P0**, **P1**, and **P2** express im
 
 ### Automation and integration
 
-- `ScheduledTransaction` describes a future or repeating register item. Before its occurrence, it has no plan effect; occurrence handling and generation policy are clone decisions.
+- `ScheduledTransaction` describes a future or repeating register item. Before its occurrence, it has no plan effect. The generation policy is resolved below.
 - `ImportBatch` and `ImportRow` are future integration concepts, not first-MVP requirements.
 
 ### ScheduledTransaction behavior
 
-A `ScheduledTransaction` is a future or repeating register item with no plan effect before its occurrence. Generated transactions are normally uncleared, except for the documented cash-account exception. Generation must be idempotent. **Open question:** Define the exact generation timing, cash-account exception handling, and other generation policy before the deferred feature is implemented.
+A `ScheduledTransaction` is a future or repeating register item with no plan effect before its occurrence. Generated transactions are normally uncleared, except on a cash account, where they are cleared.
+
+The **resolved generation policy** is: one monthly cadence with a `dayOfMonth` clamped to the end of short months and an `intervalMonths`; generation driven by an explicit owner-authorized command with an inclusive cut-off date and no background job; idempotency carried by the occurrence identity `sch:<scheduleId>:<YYYY-MM-DD>` used as the ordinary transaction command's `Idempotency-Key`, with no generation cursor and no occurrence table; and automatic posting of a generated occurrence as an ordinary transaction.
+
+**Open question:** Editing repetition, pausing a schedule, and weekly, annual, or custom cadences remain unsupported.
 
 ## Relationship sketch
 

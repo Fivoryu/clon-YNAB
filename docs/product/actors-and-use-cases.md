@@ -74,7 +74,7 @@ RTA = realized opening cash
 | Budget member | Future-ready membership boundary for collaboration and role-based access | Boundary only; collaboration deferred |
 | Budget system/engine | Authoritative calculator and consistency boundary | Required |
 | Bank/financial institution | External reference for manual reconciliation only | Reference only |
-| Scheduler/generation process | Future process for recurring register items | Deferred |
+| Scheduler/generation process | Explicit owner-authorized command that creates due occurrences as ordinary transactions | Delivered |
 | Administrator/financial reviewer | Possible oversight role with no assumed MVP authority | Open question |
 
 ### Authenticated user
@@ -142,9 +142,9 @@ RTA = realized opening cash
 
 **Observed YNAB behavior:** Scheduled transactions are future or repeating register items and have no plan effect before occurrence, as summarized in [Budget engine research](../research/budget-engine.md).
 
-**Clone decision:** Scheduling is deferred. If introduced, the generation process must create an ordinary transaction only at the defined occurrence and must be idempotent: processing the same occurrence twice cannot duplicate account or plan effects.
+**Clone decision:** Scheduling is delivered as a later slice. Generation is an explicit owner-authorized command with an inclusive cut-off date, not a background process. It creates exactly one ordinary transaction per due occurrence and is idempotent: the occurrence identity `sch:<scheduleId>:<YYYY-MM-DD>` is the ordinary command's `Idempotency-Key`, so processing the same occurrence twice cannot duplicate account or plan effects.
 
-**Open question:** Define generation timing, timezone, missed occurrences, retries, cash-account cleared-state behavior, edits to generated items, and whether a generated item retains a stable source occurrence key.
+**Open question:** Editing repetition, pausing a schedule, and weekly, annual, or custom cadences remain unsupported.
 
 ### Administrator or financial reviewer
 
@@ -448,7 +448,7 @@ The scenarios below use the same template. “Actor” identifies the initiating
   - Concurrent edit → `CONFLICT`.
   - Recalculation failure → `INTERNAL_ERROR` with old state preserved.
 - **Dependencies:** UC-08/09/10, authoritative history, reconciliation protection, atomicity, deterministic rebuild, audit policy.
-- **Classification:** **Observed YNAB behavior:** public guidance says posted transactions can be edited and account/plan effects change accordingly. **Clone decision:** edits are atomic replacements of the affected effects and cannot rely on client-calculated balances; editing repetition belongs to the deferred P2 DU-02 Scheduled and repeating transactions use case. **Open question:** exact correction path for reconciled transactions and how edits propagate across closed or later months.
+- **Classification:** **Observed YNAB behavior:** public guidance says posted transactions can be edited and account/plan effects change accordingly. **Clone decision:** edits are atomic replacements of the affected effects and cannot rely on client-calculated balances; editing repetition remains unsupported in the delivered DU-02 Scheduled and repeating transactions use case. **Open question:** exact correction path for reconciled transactions and how edits propagate across closed or later months.
 
 ### UC-12 — Delete posted transaction
 
@@ -575,8 +575,8 @@ The scenarios below use the same template. “Actor” identifies the initiating
 - **Actor:** Authenticated user creates the schedule; future scheduler/generation process creates occurrences.
 - **Priority:** P2.
 - **Goal:** Define future/repeating register entries and generate ordinary transactions at occurrence.
-- **Reason deferred:** Scheduling requires occurrence timing, retries, timezone handling, edit semantics, and idempotent generation.
-- **Boundary:** **Observed YNAB behavior:** no plan effect exists before occurrence. **Clone decision:** a generated occurrence follows ordinary transaction rules and must be idempotent. **Open question:** exact generation policy, missed occurrences, and cleared-state exception.
+- **Reason delivered:** The phase resolved occurrence timing, generation identity, and the cleared-state exception, and delivered them as an explicit generation command.
+- **Boundary:** **Observed YNAB behavior:** no plan effect exists before occurrence. **Clone decision:** a generated occurrence follows ordinary transaction rules and must be idempotent. **Delivered:** one monthly cadence with end-of-month clamping, explicit generation with an inclusive cut-off, the occurrence identity used as the idempotency key, and automatic posting that is uncleared except on a cash account. **Still open:** editing repetition, pausing a schedule, and weekly, annual, or custom cadences.
 
 ### DU-03 — Bank import
 
@@ -643,7 +643,7 @@ The scenarios below use the same template. “Actor” identifies the initiating
 
 - **Clone decision:** First-slice mutating financial commands (setup/opening movement, assignments, moves, UC-07 realized income, and UC-08 categorized spending) carry an idempotency key. The same key plus the same command payload replays the same logical result; the same key plus a different payload returns `CONFLICT`.
 - **Clone decision:** Stale concurrent writes return `CONFLICT` rather than overwriting authoritative financial history.
-- **Open question:** Broader idempotency coverage for later-slice commands, transfer creation, import processing, and scheduled generation remains unresolved; this slice does not generalize the rule to deferred behavior.
+- **Open question:** Broader idempotency coverage for later-slice commands, transfer creation, and import processing remains unresolved; this slice does not generalize the rule to deferred behavior.
 
 ### Stable error categories
 

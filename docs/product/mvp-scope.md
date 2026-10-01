@@ -4,7 +4,7 @@
 
 Deliver a small, understandable budgeting product that demonstrates the YNAB-style planning loop without pretending to reproduce the entire commercial service.
 
-> **Implementation status note (2026-09):** this document preserves the original bounded first-slice decisions while tracking later delivery separately. Since that first slice, the repository has delivered transaction edit/delete, multiple accounts and transfers, payee/memo plus history search, manual CSV import/export, category targets, and cleared-state transitions with manual reconciliation. The account projection exposes its cleared balance; reports intentionally omit cleared and reconciliation fields. Remaining deferred and open behavior is identified below; first-slice limits are not claims about current delivery.
+> **Implementation status note (2026-09):** this document preserves the original bounded first-slice decisions while tracking later delivery separately. Since that first slice, the repository has delivered transaction edit/delete, multiple accounts and transfers, payee/memo plus history search, manual CSV import/export, category targets, cleared-state transitions with manual reconciliation, and scheduled and repeating transactions. The account projection exposes its cleared balance; reports intentionally omit cleared and reconciliation fields. Remaining deferred and open behavior is identified below; first-slice limits are not claims about current delivery.
 
 Priority and delivery status are separate: **P0**, **P1**, and **P2** express importance; delivery status is **first slice**, **later MVP slice**, or **deferred/out of MVP**. A P0 later-MVP item is not part of the bounded first slice.
 
@@ -54,7 +54,7 @@ The broader MVP remains a later MVP slice roadmap. The existing heading is retai
 - Closed-month corrections or propagation (later MVP slice; **Open question**).
 - Cleared/uncleared transitions and cleared-balance effects are delivered for supported income, spending, and transfers. Account projections expose the cleared balance; report responses deliberately do not expose cleared or reconciliation fields.
 - Manual account reconciliation and cleared-history locking are delivered. A mismatch without explicit confirmation changes nothing; a confirmed mismatch requires a reason and creates one non-assignable adjustment. Unlocking, reverting, or correcting reconciled history remains open.
-- Targets and scheduled/repeating transactions (deferred/out of MVP, P2). Category targets were delivered in the category targets phase; scheduled and repeating transactions remain deferred.
+- Category targets and scheduled and repeating transactions were delivered in later slices; both never create money automatically. A schedule cannot be edited, so editing repetition remains unsupported.
 - Cash/card overspending rollover and credit-card payment state (later MVP slice/P1; policy **Open question**).
 - Cards and basic credit-card behavior, including UC-16, which is later MVP slice/P1 scope.
 
@@ -67,7 +67,7 @@ The broader MVP remains a later MVP slice roadmap. The existing heading is retai
 - Advanced reports and forecasting.
 - Notifications and email.
 - AI recommendations.
-- Scheduled and repeating transactions, including editing repetition (deferred P2).
+- Editing repetition of a schedule, pausing a schedule, and weekly, annual, or custom cadences (unsupported).
 - Advanced credit-card workflows and full parity with YNAB.
 
 ## User journeys
@@ -118,7 +118,7 @@ Select source and destination accounts
 
 ## Entry gate for the first vertical slice
 
-**Clone decision:** No implementation starts until the Group 3 decisions are traced to concrete acceptance criteria. After this documentation update and read-only verification, the next phase is bounded SDD/OpenSpec for the first vertical slice. Cards, splits, scheduled and repeating transactions, and full formulas remain deferred; closed-month correction, reconciled-history unlocking/reverting/correction, report presentation, and resolving the account-versus-Ready-to-Assign divergence remain open. These are not entry-gate blockers for the bounded first slice.
+**Clone decision:** No implementation starts until the Group 3 decisions are traced to concrete acceptance criteria. After this documentation update and read-only verification, the next phase is bounded SDD/OpenSpec for the first vertical slice. Cards, splits, and full formulas remain deferred; closed-month correction, reconciled-history unlocking/reverting/correction, report presentation, and resolving the account-versus-Ready-to-Assign divergence remain open. These are not entry-gate blockers for the bounded first slice.
 
 ## Acceptance criteria for the first vertical slice
 
@@ -148,7 +148,7 @@ The following criteria preserve the distinction between the bounded first slice,
 - **Delivered later-slice criterion:** A posted income, spending, or transfer item transitions between `UNCLEARED` and `CLEARED` without changing its financial fields; `WORKING` items cannot be cleared, and `RECONCILED` items are locked. Each account projection exposes the server-derived cleared balance beside its working balance; report responses omit cleared and reconciliation fields.
 - **Delivered later-slice criterion:** A matching external balance records the reconciliation and locks cleared history without an adjustment. A mismatch without explicit confirmation returns `CONFLICT`, discloses the difference, and changes nothing. A confirmed mismatch requires a reason, records exactly one adjustment for the difference, and locks the history; the adjustment changes account state only and is not assignable.
 - **Open question:** Reconciled-history unlock/revert/correction, import or duplicate matching against reconciled history, presenting cleared balance or reconciliation state in reports, audit retention/immutability, and resolving the account-versus-Ready-to-Assign divergence remain open. The adjustment may cause that divergence; this phase does not resolve it inside the plan.
-- Category targets were delivered and never create money automatically; scheduled transactions remain deferred/out of MVP and likewise do not create money automatically.
+- **Delivered later-slice criterion:** Category targets and scheduled and repeating transactions were delivered in later slices; neither creates money automatically, and a schedule has no effect on any account or plan value until its occurrence is generated.
 
 ## Suggested delivery slices
 
@@ -159,7 +159,7 @@ The following criteria preserve the distinction between the bounded first slice,
 5. Realized income and categorized spending; transaction edit/delete and transfers were delivered in later slices, while splits remain deferred.
 6. Dashboard and monthly summary.
 7. **Delivered (MVP expanded/P1):** Cleared state and manual reconciliation; reconciled-history correction and report presentation remain open.
-8. Category targets were delivered; scheduled and repeating transactions remain a later milestone.
+8. Category targets, and scheduled and repeating transactions, were delivered in later slices.
 
 Each slice should leave the application runnable and documented. Do not start the next slice while the current domain behavior is still ambiguous.
 

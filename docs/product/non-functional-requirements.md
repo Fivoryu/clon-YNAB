@@ -103,7 +103,7 @@ A **constraint** is mandatory for every conforming implementation. A **target** 
   - **Clone decision:** Stale concurrent financial writes shall return `CONFLICT` rather than overwrite authoritative history.
   - **Clone decision:** A failed atomic command shall leave authoritative state unchanged and expose a request identifier for diagnosis.
   - **Product-quality goal:** The system should provide a documented rebuild/reconciliation path for derived data before production-like evaluation.
-  - **Open question:** Broader idempotency coverage for later-slice commands, transfers, imports, and scheduled generation, plus the exact recovery tooling/retention policy, remains unresolved.
+  - **Open question:** Broader idempotency coverage for later-slice commands, transfers, and imports, plus the exact recovery tooling/retention policy, remains unresolved.
 - **Operational/verification criteria:**
   - **Given** the same account, category, transaction, allocation, and rollover history **When** the engine rebuilds twice **Then** all returned values and classifications match.
   - **Given** the same idempotency key and identical first-slice mutating command payload **When** the financial creation command is submitted twice **Then** the same logical result is replayed and only one financial effect exists.
@@ -206,7 +206,7 @@ A **constraint** is mandatory for every conforming implementation. A **target** 
   - **Clone decision:** A planning month uses an explicit `YYYY-MM`-style calendar boundary and must not depend on the browser's local timezone by accident. The first slice stores one explicit IANA budget timezone, defaults it to `UTC`, and does not permit timezone changes after budget creation.
   - **Clone decision:** Rollover and summaries use the budget's configured timezone; the browser timezone never decides month boundaries.
   - **Product-quality goal:** UI, API, engine, and persistence shall display and interpret the same date/month for a given budget.
-  - **Open question:** DST behavior, scheduled occurrence cutoff, and historical timezone changes remain deferred/Open question; they do not alter the accepted first-slice UTC-default policy.
+  - **Open question:** DST behavior and historical timezone changes remain deferred/Open question; they do not alter the accepted first-slice UTC-default policy.
 - **Operational/verification criteria:**
   - **Given** a transaction near UTC midnight **When** it is viewed in a budget **Then** its calendar date follows the explicit budget-date policy rather than an accidental client timezone.
   - **Given** the last day of a planning month **When** rollover is calculated **Then** the transaction and category activity are assigned to the documented month boundary.
@@ -262,6 +262,6 @@ Group 3 closes the first-slice authentication/session, authorization isolation, 
 8. **Observability/privacy:** log retention, redaction rules, metric backend, alert thresholds, access to diagnostics, and financial-data retention/deletion/export policy.
 9. **Maintainability:** numeric coverage threshold, CI provider, module-boundary enforcement, and contract-test scope; the mandatory first-slice test matrix and repository verification scripts are accepted.
 10. **Backup:** backup destination, encryption, retention, RPO/RTO, restore owner, export format, and restore audit process.
-11. **Deferred automation:** target subset, scheduled-generation timing, retry/missed-occurrence policy, and the P2 acceptance gate.
+11. **Deferred automation:** the remaining target subset, weekly/annual/custom scheduling cadences, and schedule pause or edit semantics.
 
 Until these questions are resolved, the affected behavior remains a documented constraint/target with an explicit open policy, not an implicit implementation promise.

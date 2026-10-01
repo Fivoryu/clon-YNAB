@@ -4,7 +4,7 @@
 
 This document defines the functional contract for the academic YNAB-style budgeting clone. It turns the accepted MVP boundary and the actor/use-case catalogue into stable, reviewable requirements without claiming parity with the commercial product or knowledge of its private schema, formulas, or implementation.
 
-The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support `POSTED`/`WORKING` status only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Later phases have since delivered multiple accounts and transfers, transaction edit/delete, and cleared-state transitions with manual reconciliation as separate account-history capabilities. Still-open or deferred behavior includes broader account types, splits, pending transaction status, overspending variants, refunds/reimbursements/returns, scheduled transactions, and advanced card/loan behavior.
+The bounded first vertical slice covers the already-documented authentication boundary, one user-owned budget, one cash/checking-style account with an explicit opening balance, categories, realized money, monthly planning, RTA/Available, assignment and category moves, one realized income command, one categorized cash/checking spending command, dashboard/month summaries, and positive rollover. These transaction commands accept positive input amounts and support `POSTED`/`WORKING` status only. Authorization, atomic account/plan effects, deterministic calculation/rebuild, and scoped idempotency are part of their test expectations. Later phases have since delivered multiple accounts and transfers, transaction edit/delete, and cleared-state transitions with manual reconciliation as separate account-history capabilities. Still-open or deferred behavior includes broader account types, splits, pending transaction status, overspending variants, refunds/reimbursements/returns, and advanced card/loan behavior.
 
 For the bounded first slice, the budget engine is authoritative for `Ready to Assign`, `Assigned`, `Activity`, `Available`, positive rollover, and their derived summaries. Later-slice overspending classifications and special formulas remain questions in [Budget engine research](../research/budget-engine.md#open-questions); this document does not silently choose them.
 
@@ -340,29 +340,35 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 ## FR-SCHEDULED — Scheduled and repeating transactions
 
 - **ID:** FR-SCHEDULED
-- **Name:** Define deferred scheduled transactions
+- **Name:** Define scheduled transactions
 - **Priority:** P2
+- **Delivery status:** Delivered as a later slice.
 - **Related actor:** Authenticated user; Scheduler/generation process; Budget system/engine.
-- **Description:** **Observed:** Public guidance describes future or repeating register entries that have no plan effect before occurrence. **Clone decision:** A future scheduled-transaction feature shall generate an ordinary transaction only at a defined occurrence and shall be idempotent.
-- **Preconditions:** The scheduling milestone is accepted; the user is authorized; account/category and recurrence data are valid; the generation process has an explicit timezone and occurrence policy.
+- **Description:** **Observed:** Public guidance describes future or repeating register entries that have no plan effect before occurrence. **Clone decision:** A scheduled transaction is a plan for a future register item. It changes no account balance, Activity, Available, Assigned, Ready to Assign, or financial event until it is generated, and a generated occurrence is an ordinary transaction that reporting cannot distinguish from one recorded by hand.
+- **Preconditions:** The user is authorized; the account exists in the budget and is not archived; recurrence, amount, and category data are valid; the budget has an explicit timezone.
+- **Resolved decisions:**
+  1. **Recurrence shape.** One cadence only: `dayOfMonth` from 1 to 31 with end-of-month clamping, and `intervalMonths` from 1 to 12. Weekly, annual, and custom cadences are not offered.
+  2. **Generation timing.** Generation is an explicit owner-authorized command with an inclusive cut-off date. There is no background job, cron, or worker. Every occurrence due up to and including the cut-off is generated, so a backlog is caught up in date order.
+  3. **Idempotency mechanism.** Occurrence identity is `sch:<scheduleId>:<YYYY-MM-DD>`, submitted as the `Idempotency-Key` of the ordinary transaction command. The ordinary command receipt is therefore the only authority for whether an occurrence happened. No generation cursor and no occurrence table are persisted.
+  4. **Posting model and cash exception.** A generated transaction is posted automatically and is uncleared, except when its account is a cash account, in which case it is cleared. The cleared value is explicit at every creation site; the public income and spending routes keep creating uncleared transactions.
 - **Expected flow:**
-  1. The user creates or edits a future/repeating schedule.
-  2. Before occurrence, the schedule is visible as a plan for a future register item but does not change account or budget values.
-  3. At the defined occurrence, the scheduler creates one ordinary transaction.
-  4. The transaction follows normal validation, authorization, budget-engine, and atomicity rules.
-  5. Retrying the same occurrence does not duplicate effects.
+  1. The user creates a schedule with a recurrence, an amount, and an account.
+  2. Before occurrence, the schedule is visible as a plan for a future register item but changes no account or budget value.
+  3. The user runs the generation command with a cut-off date.
+  4. Every occurrence due up to and including that date becomes one ordinary transaction with its atomic account and plan effects.
+  5. Retrying the same occurrence, replaying the same range, or generating an overlapping range does not duplicate effects.
 - **Business rules:**
-  - **Clone decision:** Scheduled entries are P2 and out of the first MVP.
+  - **Clone decision:** A schedule cannot be edited. Changing one means removing it and creating another.
   - **Observed:** A not-yet-occurred scheduled transaction has no plan effect.
-  - **Clone decision:** Generation uses a stable occurrence identity or equivalent idempotency mechanism.
-  - **Open question:** Generation timing, budget timezone, missed occurrences, retries, edits after generation, and the documented cash-account cleared-state exception remain open.
-- **Possible errors:** Invalid recurrence/date/timezone/account/category → `VALIDATION_ERROR`; foreign reference → `FORBIDDEN`/`NOT_FOUND`; duplicate occurrence → `CONFLICT` or idempotent replay; unavailable scheduler → safe retry without duplicate effects; persistence failure → `INTERNAL_ERROR`.
+  - **Clone decision:** Generation uses the stable occurrence identity as its idempotency mechanism.
+  - **Open question:** Editing repetition, pausing a schedule, weekly/annual/custom cadences, and notifications for upcoming occurrences remain unsupported.
+- **Possible errors:** Invalid recurrence/date/account/category → `VALIDATION_ERROR`; foreign reference → `FORBIDDEN`/`NOT_FOUND`; duplicate occurrence → idempotent replay; generation persistence failure → `INTERNAL_ERROR`.
 - **Acceptance criteria:**
   - **Given** a schedule whose occurrence has not arrived **When** the plan is calculated **Then** account balance, Activity, Available, and RTA remain unchanged by the schedule.
   - **Given** one eligible occurrence **When** generation succeeds **Then** exactly one ordinary transaction and its atomic account/plan effects exist.
   - **Given** the same occurrence is processed twice **When** the second attempt runs **Then** it does not duplicate the transaction or financial effects.
-  - **Given** the P2 milestone is not accepted **When** scheduling is requested **Then** the system identifies the capability as deferred rather than implying MVP support.
-- **Traceability:** DU-02, UC-08, UC-11, UC-13, UC-14. MVP: [Out of scope for MVP](mvp-scope.md#out-of-scope-for-mvp), [Suggested delivery slices](mvp-scope.md#suggested-delivery-slices). Research/architecture: [Budget engine research](../research/budget-engine.md#scheduled-transactions), [Domain model](../architecture/domain-model.md#automation-and-integration), [System architecture](../architecture/system-overview.md#logical-components).
+  - **Given** a generated transaction on a cash account **When** it is created **Then** it is cleared, and on any other account it is uncleared.
+- **Traceability:** DU-02, UC-08, UC-11, UC-13, UC-14. MVP: [Suggested delivery slices](mvp-scope.md#suggested-delivery-slices). Research/architecture: [Budget engine research](../research/budget-engine.md#scheduled-transactions), [Domain model](../architecture/domain-model.md#automation-and-integration), [System architecture](../architecture/system-overview.md#logical-components).
 
 ## Traceability matrix
 
@@ -379,10 +385,10 @@ Structured requirement fields and Given/When/Then acceptance criteria are normat
 | FR-ROLLOVER | UC-14, UC-04, UC-05, UC-08, UC-16 | [Budgeting](mvp-scope.md#budgeting) | [Budget engine research: rollover](../research/budget-engine.md#month-rollover); [Domain model: vocabulary](../architecture/domain-model.md#state-and-calculation-vocabulary) |
 | FR-CREDIT-CARD | UC-16, UC-08, UC-09, UC-14, UC-13 | [Transactions](mvp-scope.md#transactions); [Out of scope for MVP](mvp-scope.md#out-of-scope-for-mvp) | [YNAB domain research](../research/ynab-domain.md#ready-to-assign-and-overspending); [Budget engine research](../research/budget-engine.md#overspending) |
 | FR-TARGET | DU-01; UC-03, UC-05, UC-13 | [Out of scope for MVP](mvp-scope.md#out-of-scope-for-mvp); [Suggested delivery slices](mvp-scope.md#suggested-delivery-slices) | [Domain model: planning](../architecture/domain-model.md#budget-planning); [Budget engine research: targets](../research/budget-engine.md#targets) |
-| FR-SCHEDULED | DU-02; UC-08, UC-11, UC-13, UC-14 | [Out of scope for MVP](mvp-scope.md#out-of-scope-for-mvp); [Suggested delivery slices](mvp-scope.md#suggested-delivery-slices) | [Domain model: automation](../architecture/domain-model.md#automation-and-integration); [System architecture: logical components](../architecture/system-overview.md#logical-components) |
+| FR-SCHEDULED | DU-02; UC-08, UC-11, UC-13, UC-14 | [Suggested delivery slices](mvp-scope.md#suggested-delivery-slices) | [Domain model: automation](../architecture/domain-model.md#automation-and-integration); [System architecture: logical components](../architecture/system-overview.md#logical-components) |
 
 ## Explicit non-goals and unresolved policies
 
 - **Clone decision:** Bank synchronization, real financial-institution credentials, collaboration, mobile-native behavior, multiple currencies, advanced reports, notifications, AI recommendations, and advanced credit-card parity are outside MVP.
-- **Open question:** The bounded first-slice RTA, Available, positive-rollover, and cash-account decisions are documented above. Full-MVP future-assignment, positive-card-balance, overspending, refund, card-payment, mixed-spending, closed-month, category-lifecycle, reconciliation-correction, target, and scheduled-generation policies must be resolved before implementation of the affected later behavior.
+- **Open question:** The bounded first-slice RTA, Available, positive-rollover, and cash-account decisions are documented above. Full-MVP future-assignment, positive-card-balance, overspending, refund, card-payment, mixed-spending, closed-month, category-lifecycle, and reconciliation-correction policies must be resolved before implementation of the affected later behavior.
 - **Clone decision:** No requirement in this document authorizes private YNAB schema, formula, or implementation claims.

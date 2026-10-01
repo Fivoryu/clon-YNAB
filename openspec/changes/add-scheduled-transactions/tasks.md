@@ -119,10 +119,22 @@ Both defects were isolated rather than guessed: stashing only `apps/web/app` mad
 
 **Depends on:** the accepted behaviour of Work units 1-4. **Boundary:** `docs/product/functional-requirements.md`, `docs/product/mvp-scope.md`, `docs/product/actors-and-use-cases.md`, and `docs/architecture/domain-model.md`, plus any focused documentation test. This unit requires the owner's explicit authorization recorded in the proposal gate.
 
-17. [ ] **RED:** Add failing tests or checks that the documents no longer describe scheduled transactions as deferred, and that the four resolved questions are recorded as resolved while what remains open still reads as open. <!-- sdd-owner: implementation -->
-18. [ ] **GREEN:** Update the four documents: mark scheduled transactions delivered, record the resolved recurrence shape, generation timing and idempotency mechanism, posting model, and cash-account exception, and refresh the traceability and delivery-slice statements. <!-- sdd-owner: implementation -->
-19. [ ] **TRIANGULATE:** Strengthen the coverage for the statements that previously deferred scheduling, for the delivery slices, and for the remaining open questions that this phase did not resolve. <!-- sdd-owner: implementation -->
-20. [ ] **REFACTOR:** Refine the wording; run the focused documentation checks and the full `npm test`, and record each exact result. <!-- sdd-owner: implementation -->
+17. [x] **RED:** Add failing tests or checks that the documents no longer describe scheduled transactions as deferred, and that the four resolved questions are recorded as resolved while what remains open still reads as open. <!-- sdd-owner: implementation -->
+18. [x] **GREEN:** Update the four documents: mark scheduled transactions delivered, record the resolved recurrence shape, generation timing and idempotency mechanism, posting model, and cash-account exception, and refresh the traceability and delivery-slice statements. <!-- sdd-owner: implementation -->
+19. [x] **TRIANGULATE:** Strengthen the coverage for the statements that previously deferred scheduling, for the delivery slices, and for the remaining open questions that this phase did not resolve. <!-- sdd-owner: implementation -->
+20. [x] **REFACTOR:** Refine the wording; run the focused documentation checks and the full `npm test`, and record each exact result. <!-- sdd-owner: implementation -->
+
+### Work Unit 5 outcome and evidence
+
+Observed results: the focused documentation test **8 passed, 0 failed**, and the full API suite with the database **324 passed, 0 failed, 0 skipped**. Real RED evidence was captured: the documentation test failed on two assertions before the documents were edited, and passed afterwards.
+
+A new check, `apps/api/test/product-docs.test.ts`, asserts that the delivery status of scheduled transactions is recorded, that the four resolved decisions are present, that no product or architecture document still defers scheduling, and that the genuinely unresolved limitations still read as open.
+
+The boundary in this unit named four documents, and a fifth had to be corrected to satisfy the parent gate that the product-scope documents no longer describe scheduled transactions as deferred. `docs/product/non-functional-requirements.md` still carried the occurrence cutoff and generation identity in its unresolved lists even though the phase resolved both. Leaving it would have failed the gate, so the three affected statements were corrected: the cutoff was removed from the deferred timezone questions, scheduled generation was removed from the unresolved idempotency list, and the deferred-automation item now names only what genuinely remains.
+
+In `docs/product/actors-and-use-cases.md`, the actor table row, the actor section, the DU-02 use case, a classification sentence and an idempotency open question all still described scheduling as deferred; each now records delivery and keeps editing repetition, pausing, and weekly/annual/custom cadences open. In `docs/architecture/domain-model.md`, the summary, the automation entry and the `ScheduledTransaction` behaviour paragraph now record the resolved generation policy instead of deferring it.
+
+Three remaining mentions of scheduling in the documents are deliberate and correct: the weekly/annual/custom cadence limitation, the delivery-slice statement that records what was delivered, and the open question about generalizing the identity pattern to imports. Any further removal would misstate the delivered capability.
 
 ## Parent-owned post-apply gates
 
