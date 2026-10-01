@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { PrismaClient, Prisma } from '@prisma/client';
 import { withPostgresTransaction } from './transaction.ts';
 import { assertTransferPairing, foldEffectiveHistory, isTransferEffect, TransferPairingError } from '../planning/transaction-history.ts';
-import { calculateAccountBalances, clearedStateViolation, oldestAccount, type AccountState } from '../planning/engine.ts';
+import { calculateAccountBalances, clearedStateViolation, isBalanceEvent, oldestAccount, type AccountState } from '../planning/engine.ts';
 
 export type FinancialEvent = {
   id: string;
@@ -182,7 +182,7 @@ export class FinancialStore {
     const events = foldEffectiveHistory(rawEvents);
     const rowsAccounts = budget.accounts ?? (budget.account ? [budget.account] : []);
     const accounts = rowsAccounts.map((account: any) => ({ id: account.id, name: account.name, kind: account.kind ?? 'CASH', archived: account.archived, createdAt: account.createdAt?.toISOString?.() ?? account.createdAt, openingBalanceMinor: amount(account.openingBalances?.[0]?.amountMinor ?? 0n) }));
-    const projected = calculateAccountBalances(accounts, events.filter((event: any) => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'].includes(event.kind)).map((event: any) => ({ accountId: event.accountId, kind: event.kind, amountMinor: event.amountMinor, cleared: isFinancialEventCleared(event) })));
+    const projected = calculateAccountBalances(accounts, events.filter((event: any) => isBalanceEvent(event.kind)).map((event: any) => ({ accountId: event.accountId, kind: event.kind, amountMinor: event.amountMinor, cleared: isFinancialEventCleared(event) })));
     const alias = oldestAccount(projected);
     return {
       id: budget.id,

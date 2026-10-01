@@ -13,6 +13,10 @@ import {
   releaseIncome,
   unassign,
   assertSupportedCommand,
+  BALANCE_EVENT_KINDS,
+  isBalanceEvent,
+  LOCKABLE_EVENT_KINDS,
+  isLockableEvent,
 } from '../src/planning/engine.ts';
 
 test('account balance uses exact minor-unit arithmetic', () => {
@@ -96,4 +100,40 @@ test('month selection uses UTC by default and the budget timezone at boundaries'
 test('deferred transaction concepts are rejected', () => {
   assert.throws(() => assertSupportedCommand('transfer'), /unsupported/i);
   assert.doesNotThrow(() => assertSupportedCommand('spending'));
+});
+
+test('one balance predicate is the single source for every projection', () => {
+  assert.deepEqual(
+    [...BALANCE_EVENT_KINDS],
+    ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'],
+    'the balance kind set is the single source every projection consumes; changing it must be deliberate',
+  );
+  for (const kind of BALANCE_EVENT_KINDS) assert.equal(isBalanceEvent(kind), true, kind);
+  for (const kind of ['ASSIGNMENT', 'UNASSIGNMENT', 'MOVE', 'INCOME_RELEASE', 'TRANSACTION_DELETE', 'OPENING_BALANCE', 'income', '', 'RECONCILIATION']) {
+    assert.equal(isBalanceEvent(kind), false, `\`${kind}\` must not contribute to an account balance`);
+  }
+});
+
+test('the lock predicate is separate from the balance predicate by exactly the reconciliation adjustment', () => {
+  assert.deepEqual([...LOCKABLE_EVENT_KINDS], ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN']);
+  assert.deepEqual(
+    BALANCE_EVENT_KINDS.filter(kind => !isLockableEvent(kind)),
+    ['RECONCILIATION_ADJUSTMENT'],
+    'the only kind that contributes to a balance without being lockable is the reconciliation adjustment',
+  );
+  assert.equal(isLockableEvent('RECONCILIATION_ADJUSTMENT'), false, 'a reconciliation adjustment must never become a lock candidate');
+  for (const kind of LOCKABLE_EVENT_KINDS) assert.equal(isLockableEvent(kind), true, kind);
+  for (const kind of ['ASSIGNMENT', 'MOVE', 'INCOME_RELEASE', 'TRANSACTION_DELETE', '', 'RECONCILIATION_ADJUSTMENT']) {
+    assert.equal(isLockableEvent(kind), false, `\`${kind}\` must not be locked by a reconciliation`);
+  }
+});
+
+test('the reducer rejects a kind outside the single balance source instead of silently debiting it', () => {
+  const accounts = [{ id: 'a', name: 'A', kind: 'CASH' as const, archived: false, openingBalanceMinor: 1000 }];
+  const invalid = [{ accountId: 'a', kind: 'ASSIGNMENT', amountMinor: 50 }] as unknown as Parameters<typeof calculateAccountBalances>[1];
+  assert.throws(
+    () => calculateAccountBalances(accounts, invalid),
+    /is not a balance event kind/,
+    'an unknown kind must be rejected, never absorbed by a fallback branch that treats it as a debit',
+  );
 });

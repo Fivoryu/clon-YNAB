@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { applyAssignment, calculateAccountBalances, clearedStateViolation, moveAssignment, monthForDate, oldestAccount, releaseIncome, unassign, type AccountState } from './planning/engine.ts';
+import { applyAssignment, calculateAccountBalances, clearedStateViolation, isBalanceEvent, isLockableEvent, moveAssignment, monthForDate, oldestAccount, releaseIncome, unassign, type AccountState, type BalanceEventKind } from './planning/engine.ts';
 import { assertEligibleTransaction, assertTransferPairing, buildClearedReplacement, buildDeleteTombstone, buildReplacement, createHistoryCursor, isAccountOnlyHistoryFilter, isTransferEffect, normalizeMetadata, normalizeMetadataPatch, pageHistoryItems, parseHistoryCursor, parseTransactionDate, projectClearedState, TransferPairingError, type HistoryFilter, type HistoryQuery, type TransactionClearedState } from './planning/transaction-history.ts';
 import { ReportService, type FinancialSummary } from './reports/report-service.ts';
 import { projectMonthlyReport, type MonthlyReportProjection } from './reports/monthly-report.ts';
@@ -204,7 +204,10 @@ export class BudgetApp {
         const adjustment: FinancialEvent = { id: randomUUID(), kind: 'RECONCILIATION_ADJUSTMENT', accountId, amountMinor: difference, businessDate: date, month: reconciliationMonth, createdAt, cleared: true, reconciled: true, reconciliationId };
         events.push(adjustment); append(adjustment);
       }
-      const clearedItems = events.filter(event => event.accountId === accountId && ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'].includes(event.kind) && !event.reconciled && isFinancialEventCleared(event));
+      // isLockableEvent, NOT isBalanceEvent: this selects which items a reconciliation LOCKS, a
+      // different question. A reconciliation adjustment is created already reconciled, so it must
+      // never become a lock candidate. See LOCKABLE_EVENT_KINDS in planning/engine.ts.
+      const clearedItems = events.filter(event => event.accountId === accountId && isLockableEvent(event.kind) && !event.reconciled && isFinancialEventCleared(event));
       const transferIds = new Set(clearedItems.filter(isTransferEffect).map(event => event.transferId!));
       const ordinaryIds = new Set(clearedItems.filter(event => !isTransferEffect(event)).map(event => event.id));
       const lockCandidates = events.filter(event => ordinaryIds.has(event.id) || (isTransferEffect(event) && transferIds.has(event.transferId!)));
@@ -614,7 +617,7 @@ export class BudgetApp {
       throw error;
     }
   }
-  private projectAccounts(budget: FinancialState, events: FinancialEvent[]) { const accounts = budget.accounts ?? (budget.account ? [{ ...budget.account, kind: budget.account.kind ?? 'CASH', archived: budget.account.archived ?? false }] : []); return calculateAccountBalances(accounts, events.filter(event => ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'].includes(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'RECONCILIATION_ADJUSTMENT', amountMinor: event.amountMinor, cleared: isFinancialEventCleared(event) }))); }
+  private projectAccounts(budget: FinancialState, events: FinancialEvent[]) { const accounts = budget.accounts ?? (budget.account ? [{ ...budget.account, kind: budget.account.kind ?? 'CASH', archived: budget.account.archived ?? false }] : []); return calculateAccountBalances(accounts, events.filter(event => isBalanceEvent(event.kind)).map(event => ({ accountId: event.accountId, kind: event.kind as BalanceEventKind, amountMinor: event.amountMinor, cleared: isFinancialEventCleared(event) }))); }
   private balance(budget: FinancialState, events: FinancialEvent[]) { return this.projectAccounts(budget, events).reduce((sum, account) => sum + (account.balanceMinor ?? 0), 0); }
   private ready(budget: FinancialState) { if (budget.setupStep !== 'COMPLETE' || !this.activeAccount(budget)) throw new ApiError('CONFLICT', 'Budget setup is incomplete'); }
   private activeAccount(budget: FinancialState, requested?: unknown) { const accounts = budget.accounts ?? (budget.account ? [{ ...budget.account, kind: budget.account.kind ?? 'CASH', archived: budget.account.archived ?? false }] : []); if (requested !== undefined && typeof requested !== 'string') throw new ApiError('VALIDATION_ERROR', 'accountId is invalid'); const account = requested === undefined ? oldestAccount(accounts.filter(candidate => !candidate.archived)) : accounts.find(candidate => candidate.id === requested); if (!account) throw new ApiError('NOT_FOUND', 'Resource not found'); if (account.archived) throw new ApiError('CONFLICT', 'Archived accounts cannot receive new activity'); budget.accounts = accounts; return account; }

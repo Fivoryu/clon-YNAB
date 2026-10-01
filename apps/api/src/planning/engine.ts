@@ -1,7 +1,21 @@
 export type MinorUnits = number;
 export type AccountKind = 'CASH' | 'CHECKING';
 export type AccountState = { id: string; name: string; kind: AccountKind; archived: boolean; createdAt?: string; openingBalanceMinor: MinorUnits; balanceMinor?: MinorUnits; clearedBalanceMinor?: MinorUnits };
-export type AccountBalanceEvent = { accountId?: string; kind: 'INCOME' | 'SPENDING' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'RECONCILIATION_ADJUSTMENT'; amountMinor: MinorUnits; cleared?: boolean };
+// The ONE definition of which event kinds contribute to an account balance.
+// Every balance projection consumes `isBalanceEvent`; a literal kind list in a projection is a defect.
+// This site does NOT answer the separate question of which items a reconciliation may lock: a
+// reconciliation adjustment is created already reconciled, so it is never a lock candidate.
+export const BALANCE_EVENT_KINDS = ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN', 'RECONCILIATION_ADJUSTMENT'] as const;
+export type BalanceEventKind = (typeof BALANCE_EVENT_KINDS)[number];
+export const isBalanceEvent = (kind: string): kind is BalanceEventKind => (BALANCE_EVENT_KINDS as readonly string[]).includes(kind);
+// A DIFFERENT question from the balance predicate, and deliberately its own list: which effective
+// statement items a reconciliation may lock. A reconciliation adjustment is created already
+// reconciled, so it is never a lock candidate. Keeping the lists separate is what makes that
+// explicit; a future kind must be placed in each of them deliberately.
+export const LOCKABLE_EVENT_KINDS = ['INCOME', 'SPENDING', 'TRANSFER_OUT', 'TRANSFER_IN'] as const;
+export type LockableEventKind = (typeof LOCKABLE_EVENT_KINDS)[number];
+export const isLockableEvent = (kind: string): kind is LockableEventKind => (LOCKABLE_EVENT_KINDS as readonly string[]).includes(kind);
+export type AccountBalanceEvent = { accountId?: string; kind: BalanceEventKind; amountMinor: MinorUnits; cleared?: boolean };
 export type ClearedState = { status?: 'POSTED' | 'WORKING'; cleared?: boolean; reconciled?: boolean };
 export const clearedStateViolation = (event: ClearedState): string | null => {
   if (event.reconciled === true && event.status === 'WORKING') return 'A WORKING financial event cannot be reconciled';
@@ -36,6 +50,10 @@ export const calculateAccountBalance = (input: { openingBalanceMinor: MinorUnits
 };
 
 export const calculateAccountBalances = <T extends AccountState>(accounts: readonly T[], events: readonly AccountBalanceEvent[]) => {
+  // A kind outside the single source is rejected rather than silently debited. An unknown value must
+  // never be absorbed by a fallback branch: that pattern has caused silent financial defects here
+  // before, most recently as a no-op callback default that skipped a whole validation path.
+  for (const event of events) if (!isBalanceEvent(event.kind)) throw new Error(`${String(event.kind)} is not a balance event kind`);
   const ordered = orderAccounts(accounts);
   const fallback = oldestAccount(ordered)?.id;
   return ordered.map(account => {
