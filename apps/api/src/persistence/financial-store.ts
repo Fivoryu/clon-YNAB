@@ -138,7 +138,14 @@ export class FinancialStore {
   private readonly client: PrismaClient;
   constructor(client?: PrismaClient) { if (!client) throw new Error('FinancialStore requires a PrismaClient'); this.client = client; }
 
-  async execute<T>(command: FinancialCommand<T>): Promise<{ result: T; version: number }> {
+  async findReceipt(ownerId: string, budgetId: string, idempotencyKey: string): Promise<{ payloadDigest: string; result: unknown } | null> {
+    const budget = await this.client.budget.findFirst({ where: { id: budgetId, ownerId }, select: { id: true } });
+    if (!budget) throw new PersistenceError('NOT_FOUND', 'Resource not found');
+    const receipt = await this.client.commandReceipt.findUnique({ where: { budgetId_idempotencyKey: { budgetId, idempotencyKey } }, select: { payloadDigest: true, result: true } });
+    return receipt ? { payloadDigest: receipt.payloadDigest, result: receipt.result } : null;
+  }
+
+  async execute<T>(command: FinancialCommand<T>): Promise<{ result: T; version: number; replayed?: true }> {
     const payloadDigest = command.payloadDigest ?? digest({ command: command.command, input: command.input, expectedVersion: command.expectedVersion });
     return withPostgresTransaction<Prisma.TransactionClient, { result: T; version: number }>(this.client, async tx => {
       let budget = await tx.budget.findFirst({ where: { id: command.budgetId, ownerId: command.ownerId }, include: { accounts: { include: { openingBalances: { orderBy: { recordedAt: 'desc' }, take: 1 } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, categories: true } });
@@ -148,7 +155,7 @@ export class FinancialStore {
       const receipt = await tx.commandReceipt.findUnique({ where: { budgetId_idempotencyKey: { budgetId: command.budgetId, idempotencyKey: command.idempotencyKey } } });
       if (receipt) {
         if (receipt.payloadDigest !== payloadDigest) throw new PersistenceError('CONFLICT', 'Idempotency key was reused with a different payload');
-        return { result: receipt.result as T, version: await tx.commandReceipt.count({ where: { budgetId: command.budgetId } }) };
+        return { result: receipt.result as T, version: await tx.commandReceipt.count({ where: { budgetId: command.budgetId } }), replayed: true };
       }
       const version = await tx.commandReceipt.count({ where: { budgetId: command.budgetId } });
       if (command.expectedVersion !== undefined && command.expectedVersion !== version) throw new PersistenceError('CONFLICT', 'Budget version is stale');

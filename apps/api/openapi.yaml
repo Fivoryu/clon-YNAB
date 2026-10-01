@@ -199,6 +199,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/schedules/generate:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    post:
+      summary: Generate eligible scheduled transactions
+      description: Generates eligible occurrences through the inclusive cut-off date using ordinary transaction commands and per-occurrence idempotency receipts.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleGenerationInput' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/ScheduleGenerationSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/budgets/{budgetId}/schedules/{scheduleId}:
     parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/ScheduleId' }]
     delete:
@@ -667,6 +681,7 @@ components:
     ScheduleSuccess: { description: Schedule creation result., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleEnvelope' } } } }
     ScheduleListSuccess: { description: The authenticated owner's budget schedule collection and current version., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleListEnvelope' } } } }
     ScheduleRemoveSuccess: { description: Schedule removal result and current version., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRemoveEnvelope' } } } }
+    ScheduleGenerationSuccess: { description: Counts of considered, created, and replayed scheduled occurrences., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleGenerationEnvelope' } } } }
     TransferSuccess: { description: Transfer result, content: { application/json: { schema: { $ref: '#/components/schemas/TransferEnvelope' } } } }
     FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
     TransactionListSuccess: { description: Effective transaction history, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionListEnvelope' } } } }
@@ -747,6 +762,8 @@ components:
     ScheduleInput: { type: object, required: [accountId, categoryId, flow, amountMinor, dayOfMonth, intervalMonths, startDate], additionalProperties: false, properties: { accountId: { type: string, format: uuid }, categoryId: { type: string, format: uuid, nullable: true }, flow: { type: string, enum: [INCOME, SPENDING] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, dayOfMonth: { type: integer, minimum: 1, maximum: 31 }, intervalMonths: { type: integer, minimum: 1, maximum: 12 }, startDate: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }, description: Income requires categoryId=null; spending requires a categoryId. startDate must be a valid calendar date matching the declared day (clamped only for its month).}
     Schedule: { type: object, required: [id, budgetId, accountId, categoryId, flow, amountMinor, payee, memo, dayOfMonth, intervalMonths, startDate, createdAt, updatedAt], properties: { id: { type: string, format: uuid }, budgetId: { type: string, format: uuid }, accountId: { type: string, format: uuid }, categoryId: { type: string, format: uuid, nullable: true }, flow: { type: string, enum: [INCOME, SPENDING] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, dayOfMonth: { type: integer, minimum: 1, maximum: 31 }, intervalMonths: { type: integer, minimum: 1, maximum: 12 }, startDate: { type: string, format: date }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } } }
     ScheduleResult: { type: object, required: [schedule, version], properties: { schedule: { $ref: '#/components/schemas/Schedule' }, version: { type: integer, minimum: 0 } } }
+    ScheduleGenerationInput: { type: object, required: [cutoffDate], additionalProperties: false, properties: { cutoffDate: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: Inclusive last occurrence date to generate. } } }
+    ScheduleGenerationResult: { type: object, required: [occurrencesConsidered, created, replayed, version], properties: { occurrencesConsidered: { type: integer, minimum: 0 }, created: { type: integer, minimum: 0 }, replayed: { type: integer, minimum: 0 }, version: { type: integer, minimum: 0 } } }
     ScheduleListResult: { type: object, required: [schedules, version], properties: { schedules: { type: array, items: { $ref: '#/components/schemas/Schedule' } }, version: { type: integer, minimum: 0 } } }
     ScheduleRemoveResult: { type: object, required: [id, removed, version], properties: { id: { type: string, format: uuid }, removed: { type: boolean, enum: [true] }, version: { type: integer, minimum: 0 } } }
     Budget: { type: object, required: [id, setupStep, timezone, version, accounts, accountBalanceMinor, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, accounts: { type: array, items: { $ref: '#/components/schemas/Account' } }, accountBalanceMinor: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
@@ -794,6 +811,7 @@ components:
     ScheduleEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleResult' } } }
     ScheduleListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleListResult' } } }
     ScheduleRemoveEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleRemoveResult' } } }
+    ScheduleGenerationEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleGenerationResult' } } }
     TransferEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransferResult' } } }
     ReconciliationEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ReconciliationResult' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }

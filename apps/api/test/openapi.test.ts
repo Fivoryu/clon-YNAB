@@ -46,7 +46,7 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
     for (const error of errors) assert.match(block, new RegExp(`#/components/responses/${error}`), `${method.toUpperCase()} ${path} is missing ${error}`);
   }
   for (const parameter of ['BudgetId', 'CategoryId', 'IncomeId', 'TransactionId', 'ScheduleId', 'Month', 'MonthOptional', 'RequestId', 'IdempotencyKey', 'IfMatch', 'RequiredIfMatch']) assert.match(document, new RegExp(`^    ${parameter}:`, 'm'), `missing shared parameter ${parameter}`);
-  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetState', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'ScheduleInput', 'Schedule', 'ScheduleResult', 'ScheduleListResult', 'ScheduleRemoveResult', 'ScheduleEnvelope', 'ScheduleListEnvelope', 'ScheduleRemoveEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
+  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetState', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'ScheduleInput', 'Schedule', 'ScheduleResult', 'ScheduleGenerationInput', 'ScheduleGenerationResult', 'ScheduleListResult', 'ScheduleRemoveResult', 'ScheduleEnvelope', 'ScheduleGenerationEnvelope', 'ScheduleListEnvelope', 'ScheduleRemoveEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
   assert.match(document, /cookieAuth:[\s\S]*?in: cookie[\s\S]*?name: sid/);
   assert.match(document, /X-Request-ID/);
   const requestIdSchemas = [...document.matchAll(/requestId: \{([^}]*)\}/g)].map(([_, schema]) => schema);
@@ -107,6 +107,23 @@ test('OpenAPI documents owner-scoped schedule creation, listing, and removal wit
   assert.match(document, /ScheduleListResult:[^\n]*schedules:[^\n]*Schedule/);
   assert.match(document, /ScheduleResult:[^\n]*schedule:[^\n]*version/);
   assert.match(document, /ScheduleRemoveResult:[^\n]*removed:[^\n]*version/);
+});
+
+test('OpenAPI documents owner-authorized schedule generation and its required fields', () => {
+  const generate = operationBlock('/api/v1/budgets/{budgetId}/schedules/generate', 'post');
+  assert.match(generate, /parameters: \[\{ \$ref: '#\/components\/parameters\/IdempotencyKey' \}\]/);
+  assert.match(generate, /security: \[\{ cookieAuth: \[\] \}\]/);
+  assert.match(generate, /requestBody: \{ required: true,[^\r\n]*ScheduleGenerationInput/);
+  assert.match(generate, /'200': \{ \$ref: '#\/components\/responses\/ScheduleGenerationSuccess' \}/);
+  const input = document.match(/^    ScheduleGenerationInput: ([^\r\n]*)$/m)?.[1];
+  const result = document.match(/^    ScheduleGenerationResult: ([^\r\n]*)$/m)?.[1];
+  assert.ok(input, 'ScheduleGenerationInput schema must be on a single line');
+  assert.ok(result, 'ScheduleGenerationResult schema must be on a single line');
+  assert.match(input, /required: \[cutoffDate\]/);
+  assert.match(input, /cutoffDate: \{ type: string, format: date/);
+  assert.match(input, /additionalProperties: false/);
+  assert.match(result, /required: \[occurrencesConsidered, created, replayed, version\]/);
+  for (const field of ['occurrencesConsidered', 'created', 'replayed', 'version']) assert.match(result, new RegExp(`\\b${field}: \\{ type: integer, minimum: 0 \\}`));
 });
 
 test('OpenAPI documents the bounded multi-account and transfer contract', () => {

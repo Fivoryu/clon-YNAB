@@ -73,7 +73,7 @@ export function occurrenceIdentity(scheduleId: string, occurrenceDate: string): 
   return `sch:${scheduleId}:${occurrenceDate}`;
 }
 
-export function generatedCleared(accountKind: string): boolean {
+export function generatedCleared(accountKind: string | undefined): boolean {
   return accountKind === 'CASH';
 }
 
