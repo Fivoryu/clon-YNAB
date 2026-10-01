@@ -372,6 +372,18 @@ small { color: var(--muted); }
 .account-cleared-state.reconciled { background: var(--accent-soft); color: var(--accent-dark); }
 .account-history-list .transaction-row { grid-template-columns: 38px minmax(0, 1fr) auto 44px; }
 .account-history-list .transaction-actions { grid-column: 4; }
+.schedule-manager { display: grid; gap: 14px; }
+.schedule-manager .section-heading, .schedule-manager h3, .schedule-manager p { margin-bottom: 0; }
+.schedule-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.schedule-item { align-items: center; background: var(--soft); border-radius: 12px; display: flex; gap: 12px; justify-content: space-between; padding: 14px; }
+.schedule-item > div { display: grid; gap: 4px; min-width: 0; }
+.schedule-item span, .schedule-item small, .schedule-disclosure, .schedule-generation > p { color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.schedule-disclosure, .schedule-generation { border-top: 1px solid var(--line); padding-top: 12px; }
+.schedule-generation, .schedule-form { display: grid; gap: 10px; }
+.schedule-generation button, .schedule-form > button { justify-self: start; }
+.schedule-form { background: #f8fbf8; border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.schedule-form-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.schedule-empty { margin: 0; }
 .account-reconciliation-note { color: var(--muted); font-size: .83rem; line-height: 1.5; margin: 0 18px; }
 .reconciliation-dialog { max-width: 540px; }
 .reconciliation-balance { align-items: center; background: var(--soft); border-radius: 12px; display: flex; justify-content: space-between; padding: 14px 16px; }
@@ -386,6 +398,10 @@ small { color: var(--muted); }
   .account-detail-balances { grid-template-columns: 1fr; width: 100%; }
   .account-detail-balances .account-detail-balance, .account-detail-balances .account-cleared-balance { text-align: left; }
   .account-reconcile-action { justify-self: stretch; }
+  .schedule-manager { min-width: 0; padding: 16px; }
+  .schedule-item { align-items: flex-start; }
+  .schedule-item > button { flex: 0 0 auto; }
+  .schedule-generation button, .schedule-form > button { justify-self: stretch; }
   .account-history-list .transaction-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .account-history-list .transaction-row > strong { grid-column: 3; grid-row: 1; justify-self: end; }
   .account-history-list .transaction-actions { grid-column: 2 / -1; justify-content: flex-start; }

@@ -44,6 +44,42 @@ export type CategoryTargetInput =
   | { kind: 'MONTHLY_SET_ASIDE'; amountMinor: number }
   | { kind: 'BALANCE_BY_DATE'; amountMinor: number; targetMonth: string };
 
+export type Schedule = {
+  id: string;
+  budgetId: string;
+  accountId: string;
+  categoryId: string | null;
+  flow: 'INCOME' | 'SPENDING';
+  amountMinor: number;
+  payee: string | null;
+  memo: string | null;
+  dayOfMonth: number;
+  intervalMonths: number;
+  startDate: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ScheduleInputFields = {
+  accountId: string;
+  amountMinor: number;
+  dayOfMonth: number;
+  intervalMonths: number;
+  startDate: string;
+  payee?: string;
+  memo?: string;
+};
+
+export type ScheduleInput =
+  | (ScheduleInputFields & { flow: 'INCOME'; categoryId: null })
+  | (ScheduleInputFields & { flow: 'SPENDING'; categoryId: string });
+
+export type ScheduleListResult = { schedules: Schedule[]; version: number };
+export type ScheduleResult = { schedule: Schedule; version: number };
+export type ScheduleRemoveResult = { id: string; removed: true; version: number };
+export type ScheduleGenerationInput = { cutoffDate: string };
+export type ScheduleGenerationResult = { occurrencesConsidered: number; created: number; replayed: number; version: number };
+
 export type CategorySummary = Category & {
   carryoverMinor: number;
   assignedMinor: number;

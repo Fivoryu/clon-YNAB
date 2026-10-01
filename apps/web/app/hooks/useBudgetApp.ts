@@ -18,6 +18,12 @@ import type {
   MultiMonthReport,
   MultiMonthReportState,
   Summary,
+  ScheduleGenerationInput,
+  ScheduleGenerationResult,
+  ScheduleInput,
+  ScheduleListResult,
+  ScheduleRemoveResult,
+  ScheduleResult,
 } from '../models';
 import { appendAccountHistoryPage, isCurrentAccountHistoryPageRequest, isReportMonth, isReportRange, markAccountHistoryAppendError, reportRangeError } from '../models';
 
@@ -93,6 +99,18 @@ export function useBudgetApp() {
     setBudget(current => current ? { ...current, version: result.version } : current);
     return result;
   }, []);
+
+  const readSchedules = useCallback(async () => {
+    if (!budget?.id || budget.setupStep !== 'COMPLETE') return null;
+    try {
+      const result = await apiCall<ScheduleListResult>(`/api/v1/budgets/${budget.id}/schedules`);
+      setBudget(current => current ? { ...current, version: result.version } : current);
+      return result;
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudieron cargar los movimientos periódicos.' });
+      return null;
+    }
+  }, [budget?.id, budget?.setupStep]);
 
   const readAccountHistory = useCallback(async (accountId: string) => {
     const budgetId = budget?.id;
@@ -367,6 +385,27 @@ export function useBudgetApp() {
   const createCategory = (name: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }, 'Categoría creada.');
   const renameCategory = (categoryId: string, name: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories/${categoryId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }, 'Categoría renombrada.');
   const archiveCategory = (categoryId: string) => categoryMutation(`/api/v1/budgets/${budget!.id}/categories/${categoryId}/archive`, { method: 'POST' }, 'Categoría archivada.');
+  const scheduleCommand = async <T extends { version: number }>(url: string, method: 'POST' | 'DELETE', body: unknown, success: (result: T) => string): Promise<T | null> => {
+    if (!budget) return null;
+    setBusy(true); setNotice(null);
+    try {
+      const result = await apiCall<T>(url, {
+        method,
+        headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'Idempotency-Key': crypto.randomUUID(), 'If-Match': `W/"${budget.version}"` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      setBudget(current => current ? { ...current, version: result.version } : current);
+      setNotice({ kind: 'success', text: success(result) });
+      await sync({ ...budget, version: result.version }, month, historyFilters);
+      return result;
+    } catch (error) { setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'No se pudo completar la acción.' }); return null; }
+    finally { setBusy(false); }
+  };
+
+  const createSchedule = (input: ScheduleInput) => scheduleCommand<ScheduleResult>(`/api/v1/budgets/${budget!.id}/schedules`, 'POST', input, () => 'Movimiento periódico guardado.');
+  const removeSchedule = (scheduleId: string) => scheduleCommand<ScheduleRemoveResult>(`/api/v1/budgets/${budget!.id}/schedules/${scheduleId}`, 'DELETE', undefined, () => 'Movimiento periódico eliminado.');
+  const generateSchedules = (input: ScheduleGenerationInput) => scheduleCommand<ScheduleGenerationResult>(`/api/v1/budgets/${budget!.id}/schedules/generate`, 'POST', input, result => `Se registraron ${result.created} movimiento${result.created === 1 ? '' : 's'} y ${result.replayed} movimiento${result.replayed === 1 ? '' : 's'} ya estaban en el historial.`);
+
   const changeCategoryTarget = async (categoryId: string, target: CategoryTargetInput | null) => {
     if (!budget) return null;
     setBusy(true); setNotice(null);
@@ -461,6 +500,7 @@ export function useBudgetApp() {
     authenticate, signOut, saveSetupAccount, saveSetupCategories, setMonth, refresh: sync,
     assign, unassign, move, recordIncome, recordSpending, recordTransfer, releaseIncome,
     createAccount, renameAccount, archiveAccount, createCategory, renameCategory, archiveCategory, changeCategoryTarget,
+    readSchedules, createSchedule, removeSchedule, generateSchedules,
     applyHistoryFilters, readAccountHistory, resetAccountHistory: readAccountHistory, loadMoreAccountHistory, retryAccountHistory,
     readMonthlyReport, readReportRange, reportRange,
     editTransaction, deleteTransaction, setTransactionCleared, reconcileAccount, exportCsv, importCsv,
