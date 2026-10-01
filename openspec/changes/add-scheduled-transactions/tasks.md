@@ -52,10 +52,24 @@ Two verification findings were rejected as reasoned false positives and are reco
 
 **Depends on:** Work unit 1's persisted model and load path. **Boundary:** `apps/api/src/app.ts`, `apps/api/src/server.ts`, `apps/api/openapi.yaml`, and focused API tests. Roll back the three together; no schema change.
 
-5. [ ] **RED:** Add failing tests for creating, listing, and removing a schedule; for every validation rejection (unknown account or category, an account or category from another budget, an archived account or category, a non-positive or unsafe amount, income carrying a category, spending without one, `dayOfMonth` outside 1-31, `intervalMonths` outside 1-12, a malformed start date); for removing a schedule that does not exist; for idempotent replay and incompatible-key `CONFLICT`; for non-disclosing behaviour on a foreign budget, account, category, or schedule; and for the reported revision changing when a schedule changes. <!-- sdd-owner: implementation -->
-6. [ ] **GREEN:** Implement the three commands and their routes, validate on the server, keep them owner-scoped and budget-scoped, and document them in the OpenAPI contract. <!-- sdd-owner: implementation -->
-7. [ ] **TRIANGULATE:** Strengthen the coverage with a second schedule on the same account, a schedule on a different account of the same budget, an archived account that keeps an existing schedule readable while rejecting a new one, and a test proving that create, list, and remove leave RTA, Assigned, Activity, Available, balances, and event counts identical. <!-- sdd-owner: implementation -->
-8. [ ] **REFACTOR:** Refine validation and the route layer without changing the contract; run `npm test` without and with the documented database URL, `npm run db:validate`, and the OpenAPI test, and record each exact result. <!-- sdd-owner: implementation -->
+5. [x] **RED:** Add failing tests for creating, listing, and removing a schedule; for every validation rejection (unknown account or category, an account or category from another budget, an archived account or category, a non-positive or unsafe amount, income carrying a category, spending without one, `dayOfMonth` outside 1-31, `intervalMonths` outside 1-12, a malformed start date); for removing a schedule that does not exist; for idempotent replay and incompatible-key `CONFLICT`; for non-disclosing behaviour on a foreign budget, account, category, or schedule; and for the reported revision changing when a schedule changes. <!-- sdd-owner: implementation -->
+6. [x] **GREEN:** Implement the three commands and their routes, validate on the server, keep them owner-scoped and budget-scoped, and document them in the OpenAPI contract. <!-- sdd-owner: implementation -->
+7. [x] **TRIANGULATE:** Strengthen the coverage with a second schedule on the same account, a schedule on a different account of the same budget, an archived account that keeps an existing schedule readable while rejecting a new one, and a test proving that create, list, and remove leave RTA, Assigned, Activity, Available, balances, and event counts identical. <!-- sdd-owner: implementation -->
+8. [x] **REFACTOR:** Refine validation and the route layer without changing the contract; run `npm test` without and with the documented database URL, `npm run db:validate`, and the OpenAPI test, and record each exact result. <!-- sdd-owner: implementation -->
+
+### Work Unit 2 outcome and evidence
+
+Measured size: **339 changed lines** against the 400-line budget. Observed results: `npm test` with the database **263 passed, 0 failed, 0 skipped**; without it **209 passed, 0 failed, 35 skipped**; `npm run db:validate` valid; `npx openspec validate add-scheduled-transactions --strict` valid.
+
+Surfaces: `app.ts` (create, list, remove, validation, ownership), `server.ts` (GET/POST on the collection, DELETE on an item), `openapi.yaml`, and the two test files.
+
+The list command reads through the schedule-aware financial path (`this.financialStore.load`), not `PrismaBudgetStore`, as design.md section 11.3 requires.
+
+A scope correction was needed during apply, and it was the parent's error rather than the writer's: the delegation prompt asked for "create or replace", while the approved specification permits only create, list and remove and forbids editing an existing schedule. The replace method, its HTTP route, and its OpenAPI operation were removed, and the create command now mints the identity server-side and rejects a client-supplied identity with `VALIDATION_ERROR`, so create cannot be used to mutate a schedule in place. This is recorded in design.md section 10.
+
+Independent verification returned FAIL and two real test-oracle gaps were closed: the projection-leak assertions only observed the dashboard and reports AFTER removing the schedule, so they never tested the state that matters (they now assert against a live future-dated schedule as well), and four assertions could pass for the wrong reason (PUT/PATCH asserted only a status code, the non-disclosure cases asserted only an error code, and an OpenAPI regex spanned two schemas).
+
+Two verification findings were rejected as reasoned false positives. First, "list is not the only reader of the schedule collection": create and remove also read it and persistence loads it, but the claim was that list is the only read-only public listing operation. Second, "an idempotent replay reports the original result version rather than the current one": returning the saved outcome, including its version, is the repository-wide idempotency contract and this specification requires an identical replay to return its saved outcome; only a genuinely new mutation advances the revision.
 
 ## Work unit 3 — Explicit generation, occurrence identity, and cleared coverage
 

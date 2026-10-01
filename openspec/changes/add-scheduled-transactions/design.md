@@ -138,7 +138,7 @@ Nothing else in either requirement is reworded. `report-policy/v1` and `report-p
 
 ## 10. Known limits, recorded rather than hidden
 
-- A schedule cannot be edited; only removed and recreated.
+- A schedule cannot be edited; only removed and recreated. **Consequently the create command mints the schedule identity server-side and the capability exposes no update, replace, or patch operation on an existing schedule. A client-supplied identity is rejected rather than silently ignored, so a caller cannot use create to mutate a schedule in place.**
 - An already generated occurrence cannot be corrected through this capability; ordinary edit/delete remains deferred in this repository.
 - Occurrence dates are calendar dates in a single budget timezone. Multi-timezone budgets remain unsupported, as they already are everywhere else.
 - `.env.example` documents PostgreSQL on port `5432` while `docker-compose.yml` and `playwright.config.ts` use `5434`. Found during this phase's read-only exploration; it is a documentation defect in an unrelated file and is recorded as a follow-up rather than fixed here.

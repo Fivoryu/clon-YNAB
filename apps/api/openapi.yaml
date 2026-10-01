@@ -7,9 +7,10 @@ info:
     same-budget transfers, categories, category targets, realized income,
     explicit income release, categorized spending, assignments, unassignments,
     moves, monthly summaries, dashboard values, transaction history including
-    cleared-state transitions, and manual CSV import/export. Splits, cards, manual
-    reconciliation, scheduled transactions, future income, refunds, reimbursements,
-    returns, and pending states remain unsupported and are not part of this contract.
+    cleared-state transitions, manual CSV import/export, and owner-scoped schedule
+    definitions. Schedules have no plan or financial effect before explicit generation.
+    Splits, cards, manual reconciliation, automatic posting, future income, refunds,
+    reimbursements, returns, and pending states remain unsupported.
     Bank-provider simulation is a fictional local simulation only: no network, credentials are not accepted, provider connectivity, no real money, and no financial effects are accepted; candidate application is deferred.
 servers:
   - url: /
@@ -172,6 +173,41 @@ paths:
       security: [{ cookieAuth: [] }]
       responses:
         '200': { $ref: '#/components/responses/CategoryTargetSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/schedules:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }]
+    get:
+      summary: List the authenticated owner's budget schedules
+      description: Reads the dedicated schedule collection. Schedules are not included in the budget summary, dashboard, or reports and have no financial effect.
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/ScheduleListSuccess' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Create a schedule
+      description: Creates a schedule definition without creating a financial event or changing financial values. Requires a budget-scoped idempotency key and expected budget version.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleInput' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/ScheduleSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/budgets/{budgetId}/schedules/{scheduleId}:
+    parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/BudgetId' }, { $ref: '#/components/parameters/ScheduleId' }]
+    delete:
+      summary: Remove a schedule
+      description: Removes only a schedule in the authenticated owner's budget. Missing or foreign schedules return the same non-disclosing not-found response.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/RequiredIfMatch' }]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/ScheduleRemoveSuccess' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -535,6 +571,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ScheduleId:
+      name: scheduleId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     IncomeId:
       name: incomeId
       in: path
@@ -590,7 +631,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: Required for financial, category-target, and cleared-state mutations; the same key and payload replay the stored result.
+      description: Required for financial, category-target, schedule, and cleared-state mutations; the same key and payload replay the stored result.
       schema: { type: string, minLength: 1 }
     SimulationIdempotencyKey:
       name: Idempotency-Key
@@ -614,7 +655,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Required expected budget version for account, transfer, category-target, and cleared-state commands. Weak or quoted integer ETags are accepted.
+      description: Required expected budget version for account, transfer, category-target, schedule, and cleared-state commands. Weak or quoted integer ETags are accepted.
       schema: { type: string, pattern: '^(?:[0-9]+|"[0-9]+"|W/"[0-9]+")$' }
   responses:
     UserSuccess: { description: Registered user, content: { application/json: { schema: { $ref: '#/components/schemas/UserEnvelope' } } } }
@@ -623,6 +664,9 @@ components:
     BudgetSuccess: { description: Budget state, content: { application/json: { schema: { $ref: '#/components/schemas/BudgetEnvelope' } } } }
     AccountSuccess: { description: Account mutation result, content: { application/json: { schema: { $ref: '#/components/schemas/AccountEnvelope' } } } }
     CategoryTargetSuccess: { description: Category target mutation result; target is null after removal., content: { application/json: { schema: { $ref: '#/components/schemas/CategoryTargetEnvelope' } } } }
+    ScheduleSuccess: { description: Schedule creation result., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleEnvelope' } } } }
+    ScheduleListSuccess: { description: The authenticated owner's budget schedule collection and current version., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleListEnvelope' } } } }
+    ScheduleRemoveSuccess: { description: Schedule removal result and current version., content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRemoveEnvelope' } } } }
     TransferSuccess: { description: Transfer result, content: { application/json: { schema: { $ref: '#/components/schemas/TransferEnvelope' } } } }
     FinancialSuccess: { description: Financial command result, content: { application/json: { schema: { $ref: '#/components/schemas/FinancialEnvelope' } } } }
     TransactionListSuccess: { description: Effective transaction history, content: { application/json: { schema: { $ref: '#/components/schemas/TransactionListEnvelope' } } } }
@@ -700,6 +744,11 @@ components:
     CategoryTarget: { type: object, required: [kind, amountMinor], properties: { kind: { type: string, enum: [MONTHLY_SET_ASIDE, BALANCE_BY_DATE] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, targetMonth: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$', description: Present only for BALANCE_BY_DATE. } } }
     CategoryTargetResult: { type: object, required: [categoryId, target, version], properties: { categoryId: { type: string, format: uuid }, target: { nullable: true, allOf: [{ $ref: '#/components/schemas/CategoryTarget' }] }, version: { type: integer, minimum: 0 } } }
     CategoryTargetState: { type: object, required: [kind, amountMinor, progressMinor, remainingMinor, status], properties: { kind: { type: string, enum: [MONTHLY_SET_ASIDE, BALANCE_BY_DATE] }, amountMinor: { type: integer, minimum: 1 }, targetMonth: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$', description: Present only for BALANCE_BY_DATE. }, progressMinor: { type: integer }, remainingMinor: { type: integer, minimum: 0 }, status: { type: string, enum: [MET, UNDERFUNDED, OVERDUE] } } }
+    ScheduleInput: { type: object, required: [accountId, categoryId, flow, amountMinor, dayOfMonth, intervalMonths, startDate], additionalProperties: false, properties: { accountId: { type: string, format: uuid }, categoryId: { type: string, format: uuid, nullable: true }, flow: { type: string, enum: [INCOME, SPENDING] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, dayOfMonth: { type: integer, minimum: 1, maximum: 31 }, intervalMonths: { type: integer, minimum: 1, maximum: 12 }, startDate: { type: string, format: date, pattern: '^\\d{4}-\\d{2}-\\d{2}$' } }, description: Income requires categoryId=null; spending requires a categoryId. startDate must be a valid calendar date matching the declared day (clamped only for its month).}
+    Schedule: { type: object, required: [id, budgetId, accountId, categoryId, flow, amountMinor, payee, memo, dayOfMonth, intervalMonths, startDate, createdAt, updatedAt], properties: { id: { type: string, format: uuid }, budgetId: { type: string, format: uuid }, accountId: { type: string, format: uuid }, categoryId: { type: string, format: uuid, nullable: true }, flow: { type: string, enum: [INCOME, SPENDING] }, amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }, payee: { $ref: '#/components/schemas/Payee' }, memo: { $ref: '#/components/schemas/Memo' }, dayOfMonth: { type: integer, minimum: 1, maximum: 31 }, intervalMonths: { type: integer, minimum: 1, maximum: 12 }, startDate: { type: string, format: date }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } } }
+    ScheduleResult: { type: object, required: [schedule, version], properties: { schedule: { $ref: '#/components/schemas/Schedule' }, version: { type: integer, minimum: 0 } } }
+    ScheduleListResult: { type: object, required: [schedules, version], properties: { schedules: { type: array, items: { $ref: '#/components/schemas/Schedule' } }, version: { type: integer, minimum: 0 } } }
+    ScheduleRemoveResult: { type: object, required: [id, removed, version], properties: { id: { type: string, format: uuid }, removed: { type: boolean, enum: [true] }, version: { type: integer, minimum: 0 } } }
     Budget: { type: object, required: [id, setupStep, timezone, version, accounts, accountBalanceMinor, account, categories], properties: { id: { type: string }, setupStep: { type: string, enum: [ACCOUNT, CATEGORIES, COMPLETE] }, timezone: { type: string, enum: [UTC] }, version: { type: integer }, accounts: { type: array, items: { $ref: '#/components/schemas/Account' } }, accountBalanceMinor: { type: integer }, account: { nullable: true, allOf: [{ $ref: '#/components/schemas/Account' }] }, categories: { type: array, items: { $ref: '#/components/schemas/Category' } } } }
     Rta: { type: object, required: [amountMinor, openingBalanceMinor, releasedIncomeMinor, unreleasedIncomeMinor, priorCarryMinor, assignedMinor], properties: { amountMinor: { type: integer }, openingBalanceMinor: { type: integer }, releasedIncomeMinor: { type: integer }, unreleasedIncomeMinor: { type: integer }, priorCarryMinor: { type: integer }, assignedMinor: { type: integer } } }
     CategorySummary: { allOf: [{ $ref: '#/components/schemas/Category' }], type: object, properties: { carryoverMinor: { type: integer }, assignedMinor: { type: integer }, activityMinor: { type: integer }, availableMinor: { type: integer }, target: { allOf: [{ $ref: '#/components/schemas/CategoryTargetState' }] } } }
@@ -742,6 +791,9 @@ components:
     BudgetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/Budget' } } }
     AccountEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/AccountResult' } } }
     CategoryTargetEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/CategoryTargetResult' } } }
+    ScheduleEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleResult' } } }
+    ScheduleListEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleListResult' } } }
+    ScheduleRemoveEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ScheduleRemoveResult' } } }
     TransferEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/TransferResult' } } }
     ReconciliationEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/ReconciliationResult' } } }
     FinancialEnvelope: { allOf: [{ $ref: '#/components/schemas/SuccessEnvelope' }], properties: { data: { $ref: '#/components/schemas/FinancialResult' } } }

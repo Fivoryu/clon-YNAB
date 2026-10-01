@@ -5,13 +5,14 @@ import { ReportService, type FinancialSummary } from './reports/report-service.t
 import { projectMonthlyReport, type MonthlyReportProjection } from './reports/monthly-report.ts';
 import { monthRangeLength, projectMultiMonthReport, type MultiMonthReport } from './reports/multi-month-report.ts';
 import { canonicalImportDigest, parseTransactionCsv, projectEffectiveCsvRows, serializeTransactionCsv, type CsvDiagnostic } from './planning/csv.ts';
-import { FinancialStore, isFinancialEventCleared, PersistenceError, type FinancialEvent, type FinancialState, type ReconciliationRecord, type TargetInput, type TransferState } from './persistence/financial-store.ts';
+import { FinancialStore, isFinancialEventCleared, PersistenceError, type FinancialEvent, type FinancialState, type ReconciliationRecord, type ScheduleState, type TargetInput, type TransferState } from './persistence/financial-store.ts';
 import { BudgetStoreError, type BudgetStore, type BudgetState, type StoredUser } from './persistence/budget-store.ts';
 import { InMemoryBudgetStore, InMemoryFinancialStore } from './persistence/in-memory-budget-store.ts';
 import { InMemorySimulationStore } from './persistence/in-memory-simulation-store.ts';
 import { SimulationPersistenceError, type SimulationCommandInput, type SimulationCreateCommand, type SimulationInspectCommand, type SimulationStore, type SimulationResult } from './persistence/simulation-store.ts';
 import { SimulationDomainError, codePointLength, type SimulationAuditProjection, type SimulationCandidate, type SimulationCheckpointProjection, type SimulationProjection, type SimulationProfileSummary, type SimulationRunProjection } from './simulation/types.ts';
 import { validateCatalogInput } from './simulation/catalog.ts';
+import { validateScheduleDefinition, type ScheduleDefinition } from './planning/schedules.ts';
 
 type Clock = () => number;
 export type Envelope<T> = { data: T; requestId: string };
@@ -45,6 +46,7 @@ export class ApiError extends Error {
 }
 
 const ok = <T>(data: T, requestId = randomUUID()): Envelope<T> => ({ data, requestId });
+const scheduleOk = <T>(data: T, requestId?: string): Envelope<T> => ({ data, requestId: requestId ?? randomUUID() });
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const publicAccount = (account: AccountState): PublicAccount => ({ id: account.id, name: account.name, kind: account.kind, archived: account.archived, openingBalanceMinor: account.openingBalanceMinor, balanceMinor: account.balanceMinor ?? account.openingBalanceMinor, clearedBalanceMinor: account.clearedBalanceMinor ?? account.openingBalanceMinor });
     const publicBudget = (b: BudgetState): Budget => { const accounts = b.accounts?.length ? b.accounts : b.account ? [{ ...b.account, kind: b.account.kind ?? 'CASH', archived: b.account.archived ?? false }] : []; const projected = accounts.map(publicAccount); const alias = projected.find(account => account.id === b.account?.id) ?? oldestAccount(projected) ?? null; return { id: b.id, setupStep: b.setupStep, timezone: b.timezone, version: b.version, accounts: projected, accountBalanceMinor: projected.reduce((sum, account) => sum + account.balanceMinor, 0), account: alias, categories: b.categories.map(c => ({ id: c.id, name: c.name, archived: c.archived })) }; };
@@ -299,6 +301,48 @@ export class BudgetApp {
       budget.targets = targets.filter(candidate => candidate.categoryId !== categoryId);
       return { categoryId, target: null, version };
     }, undefined, true, false, undefined, { categoryId, target: null });
+  }
+  async createSchedule(token: string, budgetId: string, input: unknown, requestId?: string, options: CommandOptions = {}): Promise<Envelope<{ schedule: ScheduleState; version: number }>> {
+    if (input && typeof input === 'object' && !Array.isArray(input) && Object.hasOwn(input, 'id')) throw new ApiError('VALIDATION_ERROR', 'Schedule identity is assigned by the server');
+    const definition = this.normalizeSchedule(input); const createdAt = new Date(this.now()).toISOString();
+    const schedule: ScheduleState = { id: randomUUID(), budgetId, ...definition, payee: definition.payee ?? null, memo: definition.memo ?? null, createdAt, updatedAt: createdAt };
+    return this.scheduleCommand(token, budgetId, 'schedule-set', { definition }, requestId, options, (budget, _events, version) => {
+      this.validateScheduleResources(budget, definition); budget.schedules = [...(budget.schedules ?? []), schedule]; return { schedule, version };
+    }, { persistSchedule: schedule });
+  }
+  async listSchedules(token: string, budgetId: string, requestId?: string): Promise<Envelope<{ schedules: ScheduleState[]; version: number }>> {
+    const user = await this.authenticate(token);
+    try { const state = await this.financialStore.load(user.id, budgetId); return scheduleOk({ schedules: state.schedules ?? [], version: state.version }, requestId); }
+    catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
+  }
+  async removeSchedule(token: string, budgetId: string, scheduleId: string, requestId?: string, options: CommandOptions = {}): Promise<Envelope<{ id: string; removed: true; version: number }>> {
+    return this.scheduleCommand(token, budgetId, 'schedule-remove', { scheduleId }, requestId, options, (budget, _events, version) => {
+      const schedules = budget.schedules ?? []; if (!schedules.some(schedule => schedule.id === scheduleId)) throw new ApiError('NOT_FOUND', 'Resource not found');
+      budget.schedules = schedules.filter(schedule => schedule.id !== scheduleId); return { id: scheduleId, removed: true, version };
+    }, { deleteScheduleId: scheduleId });
+  }
+  private normalizeSchedule(input: unknown): ScheduleDefinition {
+    const fields = new Set(['accountId', 'categoryId', 'flow', 'amountMinor', 'payee', 'memo', 'dayOfMonth', 'intervalMonths', 'startDate']);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !fields.has(key)) || !validateScheduleDefinition(input)) throw new ApiError('VALIDATION_ERROR', 'Schedule definition is invalid');
+    return { ...(input as ScheduleDefinition), ...metadata(input) };
+  }
+  private validateScheduleResources(budget: FinancialState, definition: ScheduleDefinition) {
+    const account = this.accountById(budget, definition.accountId);
+    if (account.archived) throw new ApiError('VALIDATION_ERROR', 'Schedule account must be active');
+    if (definition.flow === 'SPENDING') {
+      const category = budget.categories.find(candidate => candidate.id === definition.categoryId);
+      if (!category) throw new ApiError('NOT_FOUND', 'Resource not found');
+      if (category.archived) throw new ApiError('VALIDATION_ERROR', 'Schedule category must be active');
+    }
+  }
+  private async scheduleCommand<T>(token: string, budgetId: string, command: string, input: unknown, requestId: string | undefined, options: CommandOptions, work: (budget: FinancialState, events: FinancialEvent[], version: number, append: (event: FinancialEvent) => void) => T, capability: { persistSchedule?: ScheduleState; deleteScheduleId?: string }): Promise<Envelope<T>> {
+    const user = await this.authenticate(token); const key = options.idempotencyKey?.trim();
+    if (!key) throw new ApiError('VALIDATION_ERROR', 'Idempotency-Key is required');
+    if (!Number.isSafeInteger(options.expectedVersion)) throw new ApiError('VALIDATION_ERROR', 'If-Match is required');
+    try {
+      const stored = await this.financialStore.execute({ ownerId: user.id, budgetId, command, input, idempotencyKey: key, expectedVersion: options.expectedVersion, work, ...(capability.persistSchedule ? { persistSchedule: capability.persistSchedule } : {}), ...(capability.deleteScheduleId ? { deleteScheduleId: capability.deleteScheduleId } : {}) });
+      return scheduleOk(stored.result as T, requestId);
+    } catch (error) { if (error instanceof PersistenceError) throw new ApiError(error.code, error.message); throw error; }
   }
   private changeCategory(token: string, budgetId: string, requestId: string | undefined, change: (budget: BudgetState) => void) {
     const current = this.requireBudget(token, budgetId); const save = (budget: BudgetState) => { change(budget); try { return this.result(this.budgetStore.saveBudget((budget as any).ownerId, budget), requestId, saved => ok(publicBudget(saved), requestId)); } catch (error) { return this.storeError(error); } }; return current instanceof Promise ? current.then(save) : save(current);

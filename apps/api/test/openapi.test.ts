@@ -21,6 +21,8 @@ const routes = [
   ['/api/v1/budgets/{budgetId}/categories', 'post', '201', true, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
   ['/api/v1/budgets/{budgetId}/categories/{categoryId}', 'patch', '200', true, true, ['ValidationError', 'Unauthenticated', 'NotFound']], ['/api/v1/budgets/{budgetId}/categories/{categoryId}/archive', 'post', '200', false, true, ['Unauthenticated', 'NotFound']],
   ['/api/v1/budgets/{budgetId}/categories/{categoryId}/target', 'put', '200', true, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']], ['/api/v1/budgets/{budgetId}/categories/{categoryId}/target', 'delete', '200', false, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
+  ['/api/v1/budgets/{budgetId}/schedules', 'get', '200', false, true, ['Unauthenticated', 'NotFound']], ['/api/v1/budgets/{budgetId}/schedules', 'post', '201', true, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
+  ['/api/v1/budgets/{budgetId}/schedules/{scheduleId}', 'delete', '200', false, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
   ['/api/v1/budgets/{budgetId}/income', 'post', '201', true, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
   ['/api/v1/budgets/{budgetId}/income/{incomeId}/release', 'post', '200', false, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
   ['/api/v1/budgets/{budgetId}/spending', 'post', '201', true, true, ['ValidationError', 'Unauthenticated', 'NotFound', 'Conflict']],
@@ -39,12 +41,12 @@ test('OpenAPI covers every implemented API route and its contract boundary', () 
     const block = operationBlock(path, method);
     assert.match(block, new RegExp(`['"]?${success}['"]?:`), `${method.toUpperCase()} ${path} is missing success response`);
     if (body) assert.match(block, /requestBody:[\s\S]*?components\/schemas/, `${method.toUpperCase()} ${path} is missing request body schema`);
-    for (const parameter of ['RequestId', ...(path.includes('{budgetId}') ? ['BudgetId'] : []), ...(path.includes('{categoryId}') ? ['CategoryId'] : []), ...(path.includes('{incomeId}') ? ['IncomeId'] : []), ...(path.includes('{transactionId}') ? ['TransactionId'] : []), ...(path.endsWith('/summary') || path.endsWith('/dashboard') || path.endsWith('/reports/monthly') ? ['Month'] : []), ...(path.includes('/income') || path.endsWith('/spending') || path.endsWith('/target') || path.includes('/allocations') || ((method === 'patch' || method === 'delete') && path.includes('/transactions/')) ? ['IdempotencyKey', path.endsWith('/target') ? 'RequiredIfMatch' : 'IfMatch'] : [])]) assert.match(block, new RegExp(`components/parameters/${parameter}`), `${method.toUpperCase()} ${path} is missing ${parameter}`);
+    for (const parameter of ['RequestId', ...(path.includes('{budgetId}') ? ['BudgetId'] : []), ...(path.includes('{categoryId}') ? ['CategoryId'] : []), ...(path.includes('{incomeId}') ? ['IncomeId'] : []), ...(path.includes('{transactionId}') ? ['TransactionId'] : []), ...(path.includes('{scheduleId}') ? ['ScheduleId'] : []), ...(path.endsWith('/summary') || path.endsWith('/dashboard') || path.endsWith('/reports/monthly') ? ['Month'] : []), ...(path.includes('/income') || path.endsWith('/spending') || path.endsWith('/target') || path.includes('/allocations') || (path.includes('/schedules') && method !== 'get') || ((method === 'patch' || method === 'delete') && path.includes('/transactions/')) ? ['IdempotencyKey', path.endsWith('/target') || path.includes('/schedules') ? 'RequiredIfMatch' : 'IfMatch'] : [])]) assert.match(block, new RegExp(`components/parameters/${parameter}`), `${method.toUpperCase()} ${path} is missing ${parameter}`);
     if (secured) assert.match(block, /security:[\s\S]*?cookieAuth/, `${method.toUpperCase()} ${path} is missing cookie auth`);
     for (const error of errors) assert.match(block, new RegExp(`#/components/responses/${error}`), `${method.toUpperCase()} ${path} is missing ${error}`);
   }
-  for (const parameter of ['BudgetId', 'CategoryId', 'IncomeId', 'TransactionId', 'Month', 'MonthOptional', 'RequestId', 'IdempotencyKey', 'IfMatch']) assert.match(document, new RegExp(`^    ${parameter}:`, 'm'), `missing shared parameter ${parameter}`);
-  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetState', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
+  for (const parameter of ['BudgetId', 'CategoryId', 'IncomeId', 'TransactionId', 'ScheduleId', 'Month', 'MonthOptional', 'RequestId', 'IdempotencyKey', 'IfMatch', 'RequiredIfMatch']) assert.match(document, new RegExp(`^    ${parameter}:`, 'm'), `missing shared parameter ${parameter}`);
+  for (const schema of ['SuccessEnvelope', 'ErrorEnvelope', 'User', 'Session', 'Budget', 'Category', 'CategoryTargetInput', 'CategoryTarget', 'CategoryTargetState', 'CategoryTargetResult', 'CategoryTargetEnvelope', 'ScheduleInput', 'Schedule', 'ScheduleResult', 'ScheduleListResult', 'ScheduleRemoveResult', 'ScheduleEnvelope', 'ScheduleListEnvelope', 'ScheduleRemoveEnvelope', 'FinancialSummary', 'IncomeInput', 'SpendingInput', 'AllocationInput', 'MoveInput', 'TransactionEditInput', 'TransactionDeleteInput', 'TransactionHistoryItem', 'TransactionListEnvelope', 'TransactionEnvelope', 'DeleteEnvelope', 'MonthlyReport', 'MonthlyReportCategory', 'MonthlyReportTransferItem', 'MonthlyReportEnvelope']) assert.match(document, new RegExp(`^    ${schema}:`, 'm'), `missing DTO schema ${schema}`);
   assert.match(document, /cookieAuth:[\s\S]*?in: cookie[\s\S]*?name: sid/);
   assert.match(document, /X-Request-ID/);
   const requestIdSchemas = [...document.matchAll(/requestId: \{([^}]*)\}/g)].map(([_, schema]) => schema);
@@ -83,6 +85,28 @@ test('OpenAPI documents target kinds, conditional months, summary state, and nul
   assert.match(document, /CategoryTargetResult:[^\n]*target:[^\n]*nullable: true/);
   assert.match(document, /CategoryTargetState:[\s\S]*progressMinor:[^\n]*type: integer[\s\S]*remainingMinor:[^\n]*minimum: 0[\s\S]*status:[^\n]*MET, UNDERFUNDED, OVERDUE/);
   assert.match(document, /CategorySummary:[^\n]*target: \{ allOf: \[\{ \$ref: '#\/components\/schemas\/CategoryTargetState' \}\] \}/, 'an untargeted category omits the property entirely, so the summary target is not nullable');
+});
+
+test('OpenAPI documents owner-scoped schedule creation, listing, and removal without update operations', () => {
+  const list = operationBlock('/api/v1/budgets/{budgetId}/schedules', 'get');
+  const create = operationBlock('/api/v1/budgets/{budgetId}/schedules', 'post');
+  const remove = operationBlock('/api/v1/budgets/{budgetId}/schedules/{scheduleId}', 'delete');
+  assert.match(list, /ScheduleListSuccess/);
+  for (const value of ['ScheduleInput', 'IdempotencyKey', 'RequiredIfMatch', 'ScheduleSuccess']) assert.match(create, new RegExp(value));
+  for (const value of ['ScheduleId', 'IdempotencyKey', 'RequiredIfMatch', 'ScheduleRemoveSuccess']) assert.match(remove, new RegExp(value));
+  const scheduleStart = document.indexOf('  /api/v1/budgets/{budgetId}/schedules:');
+  const scheduleEnd = document.indexOf('  /api/v1/budgets/{budgetId}/income:', scheduleStart);
+  assert.ok(scheduleStart !== -1 && scheduleEnd !== -1, 'schedule OpenAPI paths must be present');
+  const schedulePaths = document.slice(scheduleStart, scheduleEnd);
+  for (const method of ['put', 'patch']) assert.doesNotMatch(schedulePaths, new RegExp(`^    ${method}:`, 'm'), `schedule paths must not define ${method.toUpperCase()}`);
+  const scheduleInputBlock = document.match(/^    ScheduleInput: [^\r\n]*$/m)?.[0];
+  assert.ok(scheduleInputBlock, 'ScheduleInput schema must be present on its own block');
+  for (const field of ['accountId', 'categoryId', 'flow', 'amountMinor', 'dayOfMonth', 'intervalMonths', 'startDate']) {
+    assert.match(scheduleInputBlock, new RegExp(`\\b${field}:`), `ScheduleInput is missing ${field}`);
+  }
+  assert.match(document, /ScheduleListResult:[^\n]*schedules:[^\n]*Schedule/);
+  assert.match(document, /ScheduleResult:[^\n]*schedule:[^\n]*version/);
+  assert.match(document, /ScheduleRemoveResult:[^\n]*removed:[^\n]*version/);
 });
 
 test('OpenAPI documents the bounded multi-account and transfer contract', () => {

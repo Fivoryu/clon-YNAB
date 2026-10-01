@@ -116,6 +116,10 @@ export const createServer = (app: BudgetApp) => createHttpServer(async (req, res
     const categoryTarget = action?.match(/^categories\/([^/]+)\/target$/);
     if (budgetId && categoryTarget?.[1] && req.method === 'PUT') return json(res, 200, await app.setCategoryTarget(token, budgetId, categoryTarget[1], input, requestId, commandOptions(req)));
     if (budgetId && categoryTarget?.[1] && req.method === 'DELETE') return json(res, 200, await app.removeCategoryTarget(token, budgetId, categoryTarget[1], requestId, commandOptions(req)));
+    const schedule = action?.match(/^schedules\/([^/]+)$/);
+    if (budgetId && req.method === 'GET' && action === 'schedules') return json(res, 200, await app.listSchedules(token, budgetId, requestId));
+    if (budgetId && req.method === 'POST' && action === 'schedules') return json(res, 201, await app.createSchedule(token, budgetId, input, requestId, commandOptions(req)));
+    if (budgetId && schedule?.[1] && req.method === 'DELETE') return json(res, 200, await app.removeSchedule(token, budgetId, schedule[1], requestId, commandOptions(req)));
     const category = action?.match(/^categories\/([^/]+)(?:\/(archive))?$/);
     if (budgetId && category?.[1] && req.method === 'PATCH' && !category[2]) return json(res, 200, await app.renameCategory(token, budgetId, category[1], input.name, requestId));
     if (budgetId && category?.[1] && category[2] === 'archive' && req.method === 'POST') return json(res, 200, await app.archiveCategory(token, budgetId, category[1], requestId));
