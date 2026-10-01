@@ -1,0 +1,198 @@
+{
+  "generatedAt": "2026-09-30T02:11:27.694Z",
+  "baseUrl": "http://127.0.0.1:3000",
+  "captures": [
+    {
+      "file": "01-login.png",
+      "title": "Inicio de sesión",
+      "description": "Puerta de entrada: autenticación local con correo y contraseña sobre sesiones administradas por el servidor.",
+      "route": "/login"
+    },
+    {
+      "file": "02-register.png",
+      "title": "Crear una cuenta",
+      "description": "Registro separado del inicio de sesión; al completarlo la sesión se abre automáticamente.",
+      "route": "/register"
+    },
+    {
+      "file": "03-setup-account.png",
+      "title": "Onboarding · cuenta",
+      "description": "Primer paso: la cuenta principal y su saldo actual, origen de todo el presupuesto.",
+      "route": "/setup"
+    },
+    {
+      "file": "04-setup-categories.png",
+      "title": "Onboarding · categorías",
+      "description": "Segundo paso: las prioridades de gasto que ordenan el plan mensual.",
+      "route": "/setup"
+    },
+    {
+      "file": "05-setup-review.png",
+      "title": "Onboarding · revisión",
+      "description": "Tercer paso: resumen verificable antes de abrir el presupuesto.",
+      "route": "/setup"
+    },
+    {
+      "file": "06-budget-fresh.png",
+      "title": "Presupuesto recién creado",
+      "description": "Estado inicial: el saldo de apertura está disponible para asignar y aún no existe historial.",
+      "route": "/budget"
+    },
+    {
+      "file": "07-login-demo.png",
+      "title": "Inicio de sesión de la cuenta demo",
+      "description": "La cuenta sembrada en la base de datos local concentra meses de historia real.",
+      "route": "/login"
+    },
+    {
+      "file": "08-budget-overview.png",
+      "title": "Presupuesto mensual",
+      "description": "Disponible para asignar, saldo total en cuentas, asignado del mes y categorías con objetivo; incluye el aviso de ingresos pendientes de liberar.",
+      "route": "/budget"
+    },
+    {
+      "file": "09-budget-target-editor.png",
+      "title": "Objetivo de categoría en contexto",
+      "description": "El objetivo se define y se edita dentro de la fila de la categoría, sin salir del presupuesto.",
+      "route": "/budget"
+    },
+    {
+      "file": "10-budget-target-suggestion.png",
+      "title": "Sugerencia de financiación",
+      "description": "Una categoría por debajo de su objetivo propone una asignación concreta y explica cuánto falta.",
+      "route": "/budget"
+    },
+    {
+      "file": "11-budget-target-confirm.png",
+      "title": "Confirmación explícita de la sugerencia",
+      "description": "La sugerencia no se aplica sola: requiere confirmación y mantiene el control en manos de la persona.",
+      "route": "/budget"
+    },
+    {
+      "file": "12-budget-adjust-panel.png",
+      "title": "Ajuste contextual del plan",
+      "description": "Agregar, retirar o mover dinero sobre la misma categoría, con el saldo disponible siempre a la vista.",
+      "route": "/budget"
+    },
+    {
+      "file": "13-budget-previous-month.png",
+      "title": "Mes anterior",
+      "description": "La misma superficie, un mes anterior: las asignaciones y el historial se reconstruyen por mes.",
+      "route": "/budget"
+    },
+    {
+      "file": "14-transactions-history.png",
+      "title": "Historial de transacciones",
+      "description": "Historial cargado automáticamente con filtros por cuenta, categoría, tipo y rango de fechas.",
+      "route": "/transactions"
+    },
+    {
+      "file": "15-transaction-new-expense.png",
+      "title": "Registrar un gasto",
+      "description": "Un único diálogo cubre gasto, ingreso y transferencia.",
+      "route": "/transactions"
+    },
+    {
+      "file": "16-transaction-new-transfer.png",
+      "title": "Registrar una transferencia",
+      "description": "La transferencia pide origen y destino y produce un único movimiento canónico en el historial.",
+      "route": "/transactions"
+    },
+    {
+      "file": "17-transactions-after-save.png",
+      "title": "Historial actualizado",
+      "description": "El movimiento recién registrado aparece en el historial efectivo sin recargar la página.",
+      "route": "/transactions"
+    },
+    {
+      "file": "18-transaction-edit.png",
+      "title": "Editar una transacción",
+      "description": "Los movimientos ordinarios admiten edición de monto, fecha, categoría, comercio y nota.",
+      "route": "/transactions"
+    },
+    {
+      "file": "19-transaction-delete-confirm.png",
+      "title": "Eliminar una transacción",
+      "description": "El borrado es explícito, auditado y protegido por confirmación.",
+      "route": "/transactions"
+    },
+    {
+      "file": "20-transactions-search.png",
+      "title": "Búsqueda literal",
+      "description": "La búsqueda revisa comercio, nota y cuenta con coincidencia literal.",
+      "route": "/transactions"
+    },
+    {
+      "file": "21-accounts.png",
+      "title": "Cuentas",
+      "description": "Saldo total, saldos por cuenta, cuentas archivadas con su historial conservado y alta de nuevas cuentas.",
+      "route": "/accounts"
+    },
+    {
+      "file": "22-account-new-form.png",
+      "title": "Añadir una cuenta al presupuesto",
+      "description": "El alta de cuentas vive en la superficie de cuentas, no dentro del flujo diario de gastos.",
+      "route": "/accounts"
+    },
+    {
+      "file": "23-account-rename.png",
+      "title": "Renombrar una cuenta",
+      "description": "El ciclo de vida de la cuenta incluye renombrar y archivar sin perder el historial.",
+      "route": "/accounts"
+    },
+    {
+      "file": "24-account-archive-confirm.png",
+      "title": "Archivar una cuenta",
+      "description": "Archivar es reversible a nivel de datos: la cuenta sale del uso diario y su historial se conserva.",
+      "route": "/accounts"
+    },
+    {
+      "file": "25-account-detail.png",
+      "title": "Detalle de cuenta",
+      "description": "Movimientos de una cuenta concreta y su saldo derivado del historial autoritativo.",
+      "route": "/accounts/{id}"
+    },
+    {
+      "file": "26-report-monthly.png",
+      "title": "Reporte mensual",
+      "description": "Ingresos, gastos, gasto por categoría, transferencias, movimientos provisionales e ingresos pendientes de liberar, con la política de reporte declarada.",
+      "route": "/reports"
+    },
+    {
+      "file": "27-report-trends.png",
+      "title": "Meses lado a lado",
+      "description": "Rango inclusivo de hasta 24 meses: resumen mensual, gráfico de flujo, detalle por mes y totales del periodo.",
+      "route": "/reports/trends"
+    },
+    {
+      "file": "28-settings-csv.png",
+      "title": "Importar y exportar CSV",
+      "description": "Herramientas de datos fuera del flujo cotidiano: exportación determinista del historial efectivo.",
+      "route": "/settings/data"
+    },
+    {
+      "file": "29-settings-csv-diagnostics.png",
+      "title": "Diagnóstico de importación",
+      "description": "La importación es todo-o-nada: los errores se listan por fila y campo y ninguna fila se guarda.",
+      "route": "/settings/data"
+    },
+    {
+      "file": "30-mobile-budget.png",
+      "title": "Presupuesto en móvil",
+      "description": "La misma superficie en 320 px: la barra inferior conserva las seis secciones con sus etiquetas completas y se desplaza en horizontal en lugar de partir las palabras.",
+      "route": "/budget"
+    },
+    {
+      "file": "31-mobile-trends.png",
+      "title": "Meses lado a lado en móvil",
+      "description": "El reporte comparativo también se adapta al ancho mínimo soportado.",
+      "route": "/reports/trends"
+    },
+    {
+      "file": "32-logout.png",
+      "title": "Cierre de sesión",
+      "description": "El ciclo termina donde empezó: la sesión se revoca y la persona vuelve a la pantalla de acceso.",
+      "route": "/login"
+    }
+  ]
+}

@@ -26,6 +26,15 @@ Priority and delivery status are separate dimensions. **P0**, **P1**, and **P2**
 10. [Non-functional requirements](product/non-functional-requirements.md)
 11. [ADR-001: modular monolith](decisions/ADR-001-modular-monolith.md)
 12. [ADR-002: financial history](decisions/ADR-002-financial-history.md)
+13. [E2E screenshot walkthrough](e2e/README.md)
+
+## Visual evidence
+
+The [E2E screenshot walkthrough](e2e/README.md) is the current visual record of the delivered
+product surface. It captures a real browser session from the login screen through onboarding, the
+monthly budget with category targets, transactions, accounts, reports, CSV data settings, the
+320 px mobile layout and the sign-out that closes the cycle. It runs against a demo budget seeded
+into the local PostgreSQL database; `npm run docs:screenshots` regenerates every image.
 
 ## Historical implementation entry gate
 

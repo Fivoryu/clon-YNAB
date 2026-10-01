@@ -16,7 +16,9 @@
     "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "test:csv": "node --experimental-strip-types --test apps/api/test/csv-domain.test.ts apps/api/test/csv-api.test.ts apps/api/test/csv-http.test.ts apps/api/test/csv-postgres.test.ts apps/api/test/openapi.test.ts apps/web/test/page.test.ts apps/web/test/money.test.ts",
     "verify": "npm test && npm run test:web && npm run typecheck:web && npm run build:web",
-    "test:web": "node --experimental-strip-types --test apps/web/test/*.test.ts"
+    "test:web": "node --experimental-strip-types --test apps/web/test/*.test.ts",
+    "seed:demo": "node scripts/seed-demo-data.mjs",
+    "docs:screenshots": "playwright test --config docs/e2e/playwright.screenshots.config.ts"
   },
   "engines": {
     "node": ">=22"
